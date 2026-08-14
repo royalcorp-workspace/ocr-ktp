@@ -159,12 +159,18 @@ def build_tier1_candidates(image: np.ndarray) -> list:
     clahe_soft = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
     enhanced_soft = clahe_soft.apply(gray)
 
+    # 1. Red Channel Optimization (best contrast for black text on blue BG)
     red_ch = image[:, :, 2] if len(image.shape) == 3 else gray
     red_enhanced = clahe_soft.apply(red_ch)
 
     unsharp_soft = soft_unsharp_mask(enhanced_soft)
 
-    # BG Removal TopHat
+    # 2. Thickened Grayscale (Erosion) to reconnect broken digit waists (e.g. '8' -> '4')
+    kernel_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    thick_gray = cv2.erode(gray, kernel_erode, iterations=1)
+    thick_enhanced = clahe_soft.apply(thick_gray)
+
+    # 3. BG Removal TopHat
     w_img = gray.shape[1]
     k_width = max(15, min(50, w_img // 40))
     kernel_bg = cv2.getStructuringElement(cv2.MORPH_RECT, (k_width, 1))
@@ -178,10 +184,24 @@ def build_tier1_candidates(image: np.ndarray) -> list:
     return [
         ("Pure Grayscale (PSM 6)", gray, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Soft CLAHE Grayscale (PSM 6)", enhanced_soft, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Thickened Grayscale (PSM 6)", thick_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Red Channel CLAHE (PSM 6)", red_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Soft Unsharp Mask (PSM 6)", unsharp_soft, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("BG Removal TopHat Mild (PSM 6)", unsharp_bg, "--oem 3 --psm 6 -c omp_thread_limit=1"),
     ]
+
+
+def normalize_illumination(gray: np.ndarray) -> np.ndarray:
+    """Normalisasi pencahayaan adaptif untuk gambar yang memiliki bayangan atau gelap."""
+    try:
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        bg = cv2.morphologyEx(gray, cv2.MORPH_DILATE, kernel)
+        diff = cv2.absdiff(gray, bg)
+        norm = cv2.normalize(diff, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8UC1)
+        return cv2.bitwise_not(norm)
+    except Exception as e:
+        logger.warning(f"Illumination normalization failed: {e}")
+        return gray
 
 
 def build_tier2_candidates(image: np.ndarray) -> list:
@@ -197,6 +217,10 @@ def build_tier2_candidates(image: np.ndarray) -> list:
     clahe_aggr = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
     enhanced_aggr = clahe_aggr.apply(gray)
 
+    # Illumination Normalization
+    gray_illum = normalize_illumination(gray)
+    enhanced_illum = clahe.apply(gray_illum)
+
     w_img = gray.shape[1]
     k_width = max(15, min(50, w_img // 40))
     kernel_bg = cv2.getStructuringElement(cv2.MORPH_RECT, (k_width, 1))
@@ -207,7 +231,7 @@ def build_tier2_candidates(image: np.ndarray) -> list:
         lower_blue = np.array([90, 20, 20])
         upper_blue = np.array([140, 255, 255])
         blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
-        
+
         image_no_blue = image.copy()
         image_no_blue[blue_mask > 0] = [255, 255, 255]
         gray_no_blue = cv2.cvtColor(image_no_blue, cv2.COLOR_BGR2GRAY)
@@ -243,6 +267,7 @@ def build_tier2_candidates(image: np.ndarray) -> list:
     adaptive_c10 = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10)
 
     return [
+        ("Illumination Norm + CLAHE (PSM 6)", enhanced_illum, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Inpaint Blue Mask (PSM 6)", gray_inpainted, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("HSV Filter + TopHat + Unsharp (PSM 6)", unsharp_hsv, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Hough Deskew + CLAHE (PSM 6)", hough_clahe, "--oem 3 --psm 6 -c omp_thread_limit=1"),

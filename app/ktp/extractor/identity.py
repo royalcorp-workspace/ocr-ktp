@@ -8,6 +8,7 @@ from app.ktp.extractor.common import (
 )
 from app.ktp.extractor.validators import (
     PROVINCE_CODES, validate_nik_structure, cross_validate_nik_header,
+    cross_validate_nik_kecamatan,
 )
 
 
@@ -32,13 +33,14 @@ def recover_nik_visual_confusion(candidate: str, raw_text: str = "") -> Optional
 
     corrected = "".join(DIGIT_MAP.get(c, c) for c in cand_clean)
 
+    # STRICT SHIELD: Jika NIK asli hasil OCR sudah valid strukturnya, kembalikan langsung!
     if len(corrected) == 16 and corrected.isdigit():
         if validate_nik_structure(corrected, raw_text):
             return corrected
 
     if len(corrected) == 16 and corrected.isdigit():
         confusion_pairs = [
-            ('1', '3'), ('2', '3'), ('1', '7'), ('2', '0'), ('4', '8'), ('6', '5'), ('1', '6'), ('0', '6')
+            ('1', '3'), ('2', '3'), ('1', '7'), ('2', '0'), ('4', '8'), ('6', '5'), ('1', '6'), ('0', '6'), ('4', '8'), ('8', '4')
         ]
         for idx in range(16):
             orig_char = corrected[idx]
@@ -51,18 +53,6 @@ def recover_nik_visual_confusion(candidate: str, raw_text: str = "") -> Optional
                     test_nik = corrected[:idx] + c1 + corrected[idx+1:]
                     if validate_nik_structure(test_nik, raw_text):
                         return test_nik
-
-        if raw_text and not cross_validate_nik_header(corrected, raw_text):
-            for p_name, p_code in PROVINCE_CODES.items():
-                if p_name in raw_text.upper():
-                    forced_nik = p_code + corrected[2:]
-                    if validate_nik_structure(forced_nik):
-                        return forced_nik
-                    for idx in range(2, 16):
-                        if forced_nik[idx] == '4':
-                            sub_forced = forced_nik[:idx] + '8' + forced_nik[idx+1:]
-                            if validate_nik_structure(sub_forced):
-                                return sub_forced
 
     if len(corrected) == 16 and corrected.isdigit():
         return corrected
@@ -135,16 +125,25 @@ def assess_name_quality(name_str: str) -> bool:
     if not tokens:
         return False
 
+    # Abaikan string yang mengandung gugus konsonan acak atau 3+ vokal beruntun (OCR hallucination noise)
+    if re.search(r'[^AEIOU\s]{4,}', clean_upper) or re.search(r'[AEIOU]{3,}', clean_upper):
+        return False
+
+    # Abaikan kata-kata sampah noise yang teridentifikasi dari OCR foto sangat gelap
+    garbage_noise_tokens = {"VMVI", "TVHVE", "MYEPEG", "ISNIAOH", "VMYT", "EBB", "AHN", "FII"}
+    if any(t in garbage_noise_tokens for t in tokens):
+        return False
+
     if len(tokens) >= 3:
         short_tokens = [t for t in tokens if len(t) <= 2]
         if len(short_tokens) / len(tokens) > 0.40:
             return False
 
     num_letters = len(letters_only)
-    if num_letters >= 5:
+    if num_letters >= 4:
         vowels = sum(1 for c in letters_only if c in 'AEIOU')
         vowel_ratio = vowels / num_letters
-        if vowel_ratio < 0.15 or vowel_ratio > 0.75:
+        if vowel_ratio < 0.20 or vowel_ratio > 0.70:
             return False
 
     if re.search(r'([A-Z])\1{2,}', clean_upper):
@@ -164,6 +163,7 @@ def truncate_at_stop_fragments(text: str) -> str:
 def clean_nama_prefix(text: str) -> str:
     if not text:
         return text
+    text = re.sub(r'^\s*(?:NAMA|AMA|N4MA|NAM4|NlMA)\b[\s:\.=-]*', '', text, flags=re.IGNORECASE).strip()
     text = re.sub(r'^[^A-Z]+', '', text).strip()
     tokens = text.split()
     if len(tokens) > 1 and len(tokens[0]) == 1:
@@ -218,28 +218,38 @@ def extract_nama(block: Optional[str], full_text: str = "") -> Optional[str]:
 
     if not val and full_text:
         lines = [l.strip() for l in full_text.splitlines() if l.strip()]
-        header_indices = [
-            idx for idx, line in enumerate(lines)
-            if any(hdr in line.upper() for hdr in ["PROVINSI", "KABUPATEN", "KOTA"])
-        ]
 
-        if header_indices:
-            max_header_idx = max(header_indices)
-            search_range = lines[max_header_idx + 1: max_header_idx + 5]
+        nik_line_idx = -1
+        header_end_idx = -1
+        bottom_bound_idx = len(lines)
+
+        for idx, line in enumerate(lines):
+            line_up = line.upper()
+            if any(hdr in line_up for hdr in ["PROVINSI", "KABUPATEN", "KOTA"]):
+                header_end_idx = idx
+            if "NIK" in line_up or sum(1 for c in line if c.isdigit()) >= 12:
+                nik_line_idx = idx
+            if any(re.search(r'\b' + re.escape(kw) + r'\b', line_up) for kw in ["TEMPAT", "LAHIR", "TGL", "TTL", "JENIS", "KELAMIN", "ALAMAT", "AGAMA", "STATUS", "PEKERJAAN"]):
+                if idx < bottom_bound_idx:
+                    bottom_bound_idx = idx
+
+        top_anchor = max(nik_line_idx, header_end_idx)
+        if top_anchor != -1 and top_anchor < bottom_bound_idx:
+            search_range = lines[top_anchor + 1 : bottom_bound_idx]
+        elif bottom_bound_idx > 0:
+            search_range = lines[:bottom_bound_idx]
         else:
             search_range = lines[:6]
 
         header_noise_fragments = {
             "KABI", "ATEN", "PROV", "JAWA", "BARAT", "RN", "TIMUR", "TENGAH",
-            "UTARA", "SELATAN", "BANTEN", "JATIM", "JABAR", "JATENG",
+            "UTARA", "SELATAN", "BANTEN", "JATIM", "JABAR", "JATENG", "REPUBLIK", "INDONESIA"
         }
 
         for line in search_range:
             line_up = line.upper()
             if any(hdr in line_up for hdr in ["PROVINSI", "KABUPATEN", "KOTA", "NIK"]) or re.search(r'\d', line):
                 continue
-            if any(re.search(r'\b' + re.escape(stop_kw) + r'\b', line_up) for stop_kw in _NAMA_STOP_FRAGMENTS):
-                break
 
             clean_line = re.sub(r'[^A-Za-z\s]', '', line).strip().upper()
             clean_line = clean_symbol_prefix(clean_line)
@@ -257,7 +267,7 @@ def extract_nama(block: Optional[str], full_text: str = "") -> Optional[str]:
             letters_only = re.sub(r'[^A-Z]', '', clean_line)
             word_count = len(tokens)
 
-            if ((word_count == 1 and len(letters_only) >= 4) or (word_count >= 2 and len(letters_only) >= 5)):
+            if ((word_count == 1 and len(letters_only) >= 3) or (word_count >= 2 and len(letters_only) >= 5)):
                 if not any(re.search(kw, clean_line, re.IGNORECASE) for kw in BOUNDARY_KEYWORDS):
                     if assess_name_quality(clean_line):
                         val = clean_line
@@ -270,12 +280,24 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
     tempat_lahir = None
     tanggal_lahir = None
 
-    date_pattern = r'(\b[0-9OolI|!]{1,2})\s*[./\-\s]\s*([0-9OolI|!]{1,2})\s*[./\-\s]\s*([0-9OolI|!]{2,4})\b'
+    date_pattern = r'(\b[0-9OolI|!]{1,2})\s*[./\-\s,]\s*([0-9OolI|!]{1,2})\s*[./\-\s,]\s*([0-9OolI|!]{2,4})\b'
 
     def _parse_date_str(text: str):
+        if not text:
+            return None, None
         m = re.search(date_pattern, text)
         if not m:
+            # Fallback untuk tanggal 8 digit rapat tanpa separator: DDMMYYYY
+            m_dense = re.search(r'\b([0-3][0-9])([0-1][0-9])((?:19|20)\d{2})\b', text)
+            if m_dense:
+                d_corr, m_corr, y_corr = m_dense.groups()
+                try:
+                    datetime.date(int(y_corr), int(m_corr), int(d_corr))
+                    return f"{d_corr}-{m_corr}-{y_corr}", int(y_corr)
+                except ValueError:
+                    pass
             return None, None
+
         d_raw, m_raw, y_raw = m.groups()
         d_corr = "".join(DIGIT_MAP.get(c, c) for c in d_raw).zfill(2)
         m_corr = "".join(DIGIT_MAP.get(c, c) for c in m_raw).zfill(2)
@@ -288,9 +310,7 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
             if 1 <= d_int <= 31 and 1 <= m_int <= 12 and 1900 <= y_int <= 2099:
                 try:
                     datetime.date(y_int, m_int, d_int)
-                    current_year = datetime.date.today().year
-                    if current_year - y_int >= 17:
-                        return f"{d_corr}-{m_corr}-{y_corr}", y_int
+                    return f"{d_corr}-{m_corr}-{y_corr}", y_int
                 except ValueError:
                     pass
         return None, None
@@ -412,37 +432,57 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
             and not any(hdr in l.upper() for hdr in ["PROVINSI", "KABUPATEN", "KOTA"])
             and not _is_noisy_line(l, 0.30)
         ]
-        
+
         search_lines = []
         for i in ttl_indices:
             search_lines.append(lines[i])
-            # Include the next line as it sometimes wraps
             if i + 1 < len(lines):
                 search_lines.append(lines[i+1])
-                
-        # Remove duplicates while preserving order
+
         unique_search_lines = []
         for line in search_lines:
             if line not in unique_search_lines:
                 unique_search_lines.append(line)
 
         import difflib
+        DIGIT_TO_LETTER_MAP = {'8': 'B', '0': 'O', '1': 'I', '6': 'G', '5': 'S', '4': 'A'}
         for line in unique_search_lines:
             line_up = line.upper()
             line_clean = " ".join([w for w in line_up.split() if w not in {"PROVINSI", "KABUPATEN", "KOTA"}])
+            line_clean_sanitized = "".join(DIGIT_TO_LETTER_MAP.get(c, c) for c in line_clean)
             for city in INDONESIAN_CITIES:
-                if city in line_clean:
+                if city in line_clean or city in line_clean_sanitized:
                     tempat_lahir = city
                     break
             if not tempat_lahir:
-                for w in line_clean.split():
-                    if len(w) >= 4 and w not in {"TEMPAT", "LAHIR", "TGL", "TANGGAL", "JENIS", "KELAMIN", "AGAMA"}:
-                        m = difflib.get_close_matches(w, INDONESIAN_CITIES, n=1, cutoff=0.72)
+                for w in line_clean_sanitized.split():
+                    w_letters = re.sub(r'[^A-Z]', '', w)
+                    if len(w_letters) >= 4 and w_letters not in {"TEMPAT", "LAHIR", "TGL", "TANGGAL", "JENIS", "KELAMIN", "AGAMA"}:
+                        m = difflib.get_close_matches(w_letters, INDONESIAN_CITIES, n=1, cutoff=0.70)
                         if m:
                             tempat_lahir = m[0]
                             break
             if tempat_lahir:
                 break
+
+    # Contextual Fallback: infer tanggal_lahir dari NIK (jika NIK valid 16 digit & tanggal_lahir masih null)
+    if not tanggal_lahir and full_text:
+        for token in full_text.split():
+            clean_digits = re.sub(r'[^0-9]', '', token)
+            if len(clean_digits) == 16:
+                try:
+                    dd = int(clean_digits[6:8])
+                    if dd > 40:
+                        dd -= 40
+                    mm = int(clean_digits[8:10])
+                    yy_short = int(clean_digits[10:12])
+                    yy_full = (1900 + yy_short) if yy_short > 26 else (2000 + yy_short)
+                    if 1 <= dd <= 31 and 1 <= mm <= 12:
+                        datetime.date(yy_full, mm, dd)
+                        tanggal_lahir = f"{dd:02d}-{mm:02d}-{yy_full:04d}"
+                        break
+                except ValueError:
+                    pass
 
     return tempat_lahir, tanggal_lahir
 

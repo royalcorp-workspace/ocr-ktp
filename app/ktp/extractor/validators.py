@@ -67,6 +67,21 @@ def cross_validate_nik_header(nik: str, raw_text: str) -> bool:
     return nik[:2] == detected_code
 
 
+def cross_validate_nik_kecamatan(nik: str, raw_text: str) -> str:
+    """
+    Strict NIK Shield Policy: Jika NIK 16 digit sudah valid strukturnya (Provinsi, Kab/Kota, Kecamatan, DOB, Seq),
+    JANGAN PERNAH meng-override digit NIK tersebut.
+    """
+    if not nik or len(nik) != 16 or not nik.isdigit():
+        return nik
+
+    # Jika NIK asli hasil OCR sudah valid strukturnya, pertahankan NIK asli!
+    if validate_nik_structure(nik):
+        return nik
+
+    return nik
+
+
 def validate_nik_structure(nik: str, raw_text: str = "") -> bool:
     if not nik or len(nik) != 16 or not nik.isdigit():
         return False

@@ -159,15 +159,19 @@ def run_candidates_tiered(image) -> tuple:
 
     Return: (best_raw_text, best_candidate_name, best_score, total_candidates_executed, best_word_conf_map)
     """
+    import time
     from app.ktp.preprocessing import build_tier1_candidates, build_tier2_candidates, build_tier3_candidates
 
+    t_start = time.perf_counter()
     total_candidates_executed = 0
     overall_best = None
+    all_tier_results = []
 
     # --- TIER 1 ---
     tier1_candidates = build_tier1_candidates(image)
     total_candidates_executed += len(tier1_candidates)
-    best_tier1, exit_tier1, _ = run_tier_candidates(tier1_candidates, tier_name="Tier 1")
+    best_tier1, exit_tier1, results_t1 = run_tier_candidates(tier1_candidates, tier_name="Tier 1")
+    all_tier_results.extend(results_t1)
 
     if best_tier1 and (overall_best is None or best_tier1["score"] > overall_best["score"]):
         overall_best = best_tier1
@@ -184,13 +188,33 @@ def run_candidates_tiered(image) -> tuple:
             overall_best["score"],
             total_candidates_executed,
             overall_best.get("word_conf_map", {}),
+            all_tier_results,
         )
+
+    # --- TIMEOUT GUARD BEFORE TIER 2 ---
+    elapsed_t1 = time.perf_counter() - t_start
+    if elapsed_t1 >= 18.0:
+        logger.warning(
+            f"TIMEOUT GUARD TRIGGERED BEFORE TIER 2 ({elapsed_t1:.2f}s >= 18.0s)! "
+            f"Skipping further tiers to prevent latency spike."
+        )
+        if overall_best:
+            return (
+                overall_best["raw_text"],
+                overall_best["name"],
+                overall_best["score"],
+                total_candidates_executed,
+                overall_best.get("word_conf_map", {}),
+                all_tier_results,
+            )
+        return "", "", 0, total_candidates_executed, {}, all_tier_results
 
     # --- TIER 2 ---
     logger.info("Tier 1 score did not trigger early exit. Proceeding to Tier 2 (Deep Preprocessing)...")
     tier2_candidates = build_tier2_candidates(image)
     total_candidates_executed += len(tier2_candidates)
-    best_tier2, exit_tier2, _ = run_tier_candidates(tier2_candidates, tier_name="Tier 2")
+    best_tier2, exit_tier2, results_t2 = run_tier_candidates(tier2_candidates, tier_name="Tier 2")
+    all_tier_results.extend(results_t2)
 
     if best_tier2 and (overall_best is None or best_tier2["score"] > overall_best["score"]):
         overall_best = best_tier2
@@ -207,13 +231,33 @@ def run_candidates_tiered(image) -> tuple:
             overall_best["score"],
             total_candidates_executed,
             overall_best.get("word_conf_map", {}),
+            all_tier_results,
         )
 
+    # --- TIMEOUT GUARD BEFORE TIER 3 ---
+    elapsed = time.perf_counter() - t_start
+    if elapsed >= 18.0:
+        logger.warning(
+            f"TIMEOUT GUARD TRIGGERED BEFORE TIER 3 ({elapsed:.2f}s >= 18.0s)! "
+            f"Skipping Tier 3 rotation fallback to prevent latency spike."
+        )
+        if overall_best:
+            return (
+                overall_best["raw_text"],
+                overall_best["name"],
+                overall_best["score"],
+                total_candidates_executed,
+                overall_best.get("word_conf_map", {}),
+                all_tier_results,
+            )
+        return "", "", 0, total_candidates_executed, {}, all_tier_results
+
     # --- TIER 3 ---
-    logger.info("Tier 2 score did not trigger early exit. Proceeding to Tier 3 (Rotation Fallback)...")
+    logger.info("Tier 1 & 2 scores did not trigger early exit. Proceeding to Tier 3 (Rotation Fallback)...")
     tier3_candidates = build_tier3_candidates(image)
     total_candidates_executed += len(tier3_candidates)
-    best_tier3, exit_tier3, _ = run_tier_candidates(tier3_candidates, tier_name="Tier 3")
+    best_tier3, _, results_t3 = run_tier_candidates(tier3_candidates, tier_name="Tier 3")
+    all_tier_results.extend(results_t3)
 
     if best_tier3 and (overall_best is None or best_tier3["score"] > overall_best["score"]):
         overall_best = best_tier3
@@ -231,8 +275,9 @@ def run_candidates_tiered(image) -> tuple:
             overall_best["score"],
             total_candidates_executed,
             overall_best.get("word_conf_map", {}),
+            all_tier_results,
         )
-    return "", "", 0, total_candidates_executed, {}
+    return "", "", 0, total_candidates_executed, {}, all_tier_results
 
 
 def run_candidates(candidates: list) -> tuple:
