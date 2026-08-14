@@ -45,13 +45,7 @@ INDONESIAN_CITIES = {
     "KENDARI", "PAREPARE", "TARAKAN", "BONTANG", "KOTA-SUBANG"
 }
 
-KNOWN_KECAMATAN_KELURAHAN = INDONESIAN_CITIES.union({
-    "RANCAEKEK", "BOJONGSALAM", "JELEGONG", "SUKAMULYA", "SUKAMANAH", "SAPAN",
-    "BOJONGLOA", "CICALENGKA", "MAJALAYA", "RANCAEKEK KULON", "RANCAEKEK WETAN",
-    "JATISARI", "SOLOKANJERUK", "CILEUNYI", "NAGREG", "PASEH", "IBUN", "BANJARAN",
-    "PENGALENGAN", "SOREANG", "KATAPANG", "DAYEUHKOLOT", "BALEENDAH", "MARGAHAYU",
-    "MARGAASIH", "CIMAHI", "PADALARANG", "LEMBANG", "PASIRWANGI", "BABAKAN", "CIBULU"
-})
+KNOWN_KECAMATAN_KELURAHAN = INDONESIAN_CITIES
 
 BOUNDARY_KEYWORDS = [
     r'\bTEMPAT\b', r'\bLAHIR\b', r'\bALAMAT\b', r'\bRT\b', r'\bRW\b',
@@ -207,7 +201,7 @@ def strip_tail_noise(val: str) -> str:
             "TANGGA", "RUMAH", "HARIAN", "LEPAS", "SWASTA", "RAYA", "UTARA", "SELATAN", "BARAT",
             "TIMUR", "TENGAH", "ASRI", "INDAH", "AGUNG", "JAYA", "MEKAR", "MULYA", "MUKTI",
             "WETAN", "KULON", "KIDUL", "LOR", "KALER", "GIRANG", "HILIR", "SARI", "SEJAHTERA",
-            "PASIR", "KOTA", "PARIGI", "BABAKAN", "CIBULU", "SUKAMANAH", "SAPAN", "BOJONGLOA"
+            "PASIR", "KOTA", "PARIGI"
         }
         if city_candidate not in protected_words:
             val = val[:trailing_city.start()].strip()

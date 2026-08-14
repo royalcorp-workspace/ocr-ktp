@@ -1,4 +1,4 @@
-from app.api.ktp_routes import _calculate_field_confidence
+from app.ktp.confidence import calculate_field_confidence
 
 
 def test_dynamic_confidence_calculation():
@@ -17,10 +17,10 @@ def test_dynamic_confidence_calculation():
         "tanggal_lahir": "15-05-1995",
     }
     
-    conf_nik_1 = _calculate_field_confidence("nik", "3204101505950001", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
-    conf_nama_1 = _calculate_field_confidence("nama", "BUDI SANTOSO", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
-    conf_tempat_1 = _calculate_field_confidence("tempat_lahir", "BANDUNG", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
-    conf_tanggal_1 = _calculate_field_confidence("tanggal_lahir", "15-05-1995", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
+    conf_nik_1 = calculate_field_confidence("nik", "3204101505950001", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
+    conf_nama_1 = calculate_field_confidence("nama", "BUDI SANTOSO", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
+    conf_tempat_1 = calculate_field_confidence("tempat_lahir", "BANDUNG", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
+    conf_tanggal_1 = calculate_field_confidence("tanggal_lahir", "15-05-1995", base_score=70, word_conf_map=word_conf_map_1, all_fields=all_fields_1)
     
     # Sample 2: Lower OCR word confidence from Tesseract (e.g. 78.0%)
     word_conf_map_2 = {
@@ -37,10 +37,10 @@ def test_dynamic_confidence_calculation():
         "tanggal_lahir": "15-05-1995",
     }
     
-    conf_nik_2 = _calculate_field_confidence("nik", "3204101505950001", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
-    conf_nama_2 = _calculate_field_confidence("nama", "BUDI SANTOSO", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
-    conf_tempat_2 = _calculate_field_confidence("tempat_lahir", "BANDUNG", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
-    conf_tanggal_2 = _calculate_field_confidence("tanggal_lahir", "15-05-1995", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
+    conf_nik_2 = calculate_field_confidence("nik", "3204101505950001", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
+    conf_nama_2 = calculate_field_confidence("nama", "BUDI SANTOSO", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
+    conf_tempat_2 = calculate_field_confidence("tempat_lahir", "BANDUNG", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
+    conf_tanggal_2 = calculate_field_confidence("tanggal_lahir", "15-05-1995", base_score=50, word_conf_map=word_conf_map_2, all_fields=all_fields_2)
 
     # Verify values are dynamic and NOT identical static numbers
     assert conf_nik_1 != conf_nik_2, f"NIK confidence should be dynamic! ({conf_nik_1} vs {conf_nik_2})"
@@ -58,8 +58,8 @@ def test_edit_distance_mutation_penalty():
     word_conf_map_perfect = {"3204101505950001": 95.0}
     word_conf_map_mutated = {"3204101505940001": 95.0}
 
-    conf_perfect = _calculate_field_confidence("nik", "3204101505950001", base_score=70, word_conf_map=word_conf_map_perfect)
-    conf_mutated = _calculate_field_confidence("nik", "3204101505950001", base_score=70, word_conf_map=word_conf_map_mutated)
+    conf_perfect = calculate_field_confidence("nik", "3204101505950001", base_score=70, word_conf_map=word_conf_map_perfect)
+    conf_mutated = calculate_field_confidence("nik", "3204101505950001", base_score=70, word_conf_map=word_conf_map_mutated)
 
     assert conf_mutated < conf_perfect, f"Mutated NIK should get lower confidence! ({conf_mutated} vs {conf_perfect})"
     # Mutation penalty for edit distance 1 is 12.0
@@ -71,8 +71,8 @@ def test_character_anomaly_penalty():
     raw_text_noisy = "PROVINSI JAWA BARAT\nNIK 32O41O15O5950001\nNAMA BUDI SANTOSO"
     raw_text_clean = "PROVINSI JAWA BARAT\nNIK 3204101505950001\nNAMA BUDI SANTOSO"
 
-    conf_noisy = _calculate_field_confidence("nik", "3204101505950001", base_score=70, raw_text=raw_text_noisy)
-    conf_clean = _calculate_field_confidence("nik", "3204101505950001", base_score=70, raw_text=raw_text_clean)
+    conf_noisy = calculate_field_confidence("nik", "3204101505950001", base_score=70, raw_text=raw_text_noisy)
+    conf_clean = calculate_field_confidence("nik", "3204101505950001", base_score=70, raw_text=raw_text_clean)
 
     assert conf_noisy < conf_clean, f"Noisy raw NIK should get lower confidence! ({conf_noisy} vs {conf_clean})"
 
@@ -89,8 +89,8 @@ def test_cross_validation_dob_mismatch_penalty():
         "tanggal_lahir": "20-10-1990",
     }
 
-    conf_match = _calculate_field_confidence("nik", "3204101505950001", base_score=70, all_fields=all_fields_match)
-    conf_mismatch = _calculate_field_confidence("nik", "3204101505950001", base_score=70, all_fields=all_fields_mismatch)
+    conf_match = calculate_field_confidence("nik", "3204101505950001", base_score=70, all_fields=all_fields_match)
+    conf_mismatch = calculate_field_confidence("nik", "3204101505950001", base_score=70, all_fields=all_fields_mismatch)
 
     assert conf_mismatch <= 55.0, f"Cross-validation mismatch should cap confidence at <= 55.0%! Got: {conf_mismatch}"
     assert conf_mismatch < conf_match, f"Match should be higher than mismatch! ({conf_match} vs {conf_mismatch})"
@@ -98,7 +98,7 @@ def test_cross_validation_dob_mismatch_penalty():
 
 def test_invalid_nik_structure_gated_cap():
     # NIK length 15 digits (invalid structure)
-    conf_invalid_len = _calculate_field_confidence("nik", "320410150595000", base_score=80)
+    conf_invalid_len = calculate_field_confidence("nik", "320410150595000", base_score=80)
     assert conf_invalid_len <= 45.0, f"Invalid NIK length should cap confidence at <= 45.0%! Got: {conf_invalid_len}"
 
 

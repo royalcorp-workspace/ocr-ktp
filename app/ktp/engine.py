@@ -168,7 +168,9 @@ def run_candidates_tiered(image) -> tuple:
     all_tier_results = []
 
     # --- TIER 1 ---
+    from app.ktp.preprocessing import build_tier1_candidates, build_tier2_candidates, build_tier3_candidates, crop_roi_candidates
     tier1_candidates = build_tier1_candidates(image)
+    tier1_candidates.extend(crop_roi_candidates(image))
     total_candidates_executed += len(tier1_candidates)
     best_tier1, exit_tier1, results_t1 = run_tier_candidates(tier1_candidates, tier_name="Tier 1")
     all_tier_results.extend(results_t1)

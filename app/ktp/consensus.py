@@ -205,6 +205,7 @@ def _vote_field(
         "confidence": final_confidence,
         "source": source_label,
         "validated": validated,
+        "voter_count": voter_count,
     }
 
 
@@ -264,7 +265,9 @@ def run_consensus_ocr(image_bytes: bytes, mobile_data: dict) -> dict:
         warnings.append("Gambar terlalu terang/overexposed (brightness tinggi).")
 
     # --- 3. Jalankan Tier 1 kandidat secara PARALEL, kumpulkan SEMUA hasil ---
+    from app.ktp.preprocessing import crop_roi_candidates
     tier1_candidates = build_tier1_candidates(image)
+    tier1_candidates.extend(crop_roi_candidates(image))
     all_ocr_results = []
 
     max_workers = len(tier1_candidates)
@@ -341,10 +344,54 @@ def run_consensus_ocr(image_bytes: bytes, mobile_data: dict) -> dict:
         result = _vote_field(field, mob_value, mob_confidence, tess_entries)
         consensus_data[field] = result
 
+    # --- 6.5. Post-Processing & Calibrated Scoring ---
+    # 6.5.a. NIK Character-Level Voting
+    preliminary_data = {f: (consensus_data[f]["value"] or "") for f in CONSENSUS_FIELDS}
+    winning_nik = preliminary_data.get("nik")
+    if winning_nik and len(winning_nik) == 16:
+        from app.ktp.extractor.validators import vote_nik_character_level
+        raw_texts = [res.get("raw_text", "") for res in all_ocr_results]
+        refined_nik = vote_nik_character_level(
+            base_nik=winning_nik,
+            raw_texts=raw_texts,
+            tanggal_lahir=preliminary_data.get("tanggal_lahir"),
+            jenis_kelamin=None  # We don't extract gender in validate yet, but DOB is enough for some syncs
+        )
+        if refined_nik != winning_nik:
+            logger.info(f"[Consensus] NIK Character-Level Voting applied: '{winning_nik}' -> '{refined_nik}'")
+            consensus_data["nik"]["value"] = refined_nik
+            preliminary_data["nik"] = refined_nik
+
+    # 6.5.b. Calibrated Gated Confidence
+    from app.ktp.confidence import calculate_field_confidence
+    best_cand = max(all_ocr_results, key=lambda x: x.get("score", 0)) if all_ocr_results else {}
+    best_raw_text = best_cand.get("raw_text", "")
+    best_word_conf_map = best_cand.get("word_conf_map", {})
+
+    for field in CONSENSUS_FIELDS:
+        val = consensus_data[field]["value"]
+        if val:
+            # Use the average confidence from all winning voters as the base score
+            base_conf = int(consensus_data[field]["confidence"])
+            calc_conf = calculate_field_confidence(
+                field_name=field,
+                value=val,
+                base_score=base_conf,
+                word_conf_map=best_word_conf_map,
+                raw_text=best_raw_text,
+                all_fields=preliminary_data
+            )
+            consensus_data[field]["confidence"] = calc_conf
+            voter_count = consensus_data[field]["voter_count"]
+            consensus_data[field]["validated"] = voter_count >= 2 or calc_conf >= 80.0
+            
+            # clean up voter_count from output if needed, or leave it
+            consensus_data[field].pop("voter_count", None)
+
         logger.info(
             f"[Consensus] VOTE field='{field}': "
-            f"winner='{result['value']}' confidence={result['confidence']} "
-            f"source={result['source']} validated={result['validated']}"
+            f"winner='{consensus_data[field]['value']}' confidence={consensus_data[field]['confidence']} "
+            f"source={consensus_data[field]['source']} validated={consensus_data[field]['validated']}"
         )
 
     # --- 7. Final result ---

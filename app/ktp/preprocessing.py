@@ -159,16 +159,22 @@ def build_tier1_candidates(image: np.ndarray) -> list:
     clahe_soft = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
     enhanced_soft = clahe_soft.apply(gray)
 
-    # 1. Red Channel Optimization (best contrast for black text on blue BG)
-    red_ch = image[:, :, 2] if len(image.shape) == 3 else gray
-    red_enhanced = clahe_soft.apply(red_ch)
+    # 1. Blue Channel & V-Channel Optimization (membuang background biru KTP, kontras teks maksimal)
+    if len(image.shape) == 3:
+        blue_ch = deskew(image[:, :, 0])
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        v_ch = deskew(hsv[:, :, 2])
+        blue_enhanced = clahe_soft.apply(blue_ch)
+        v_enhanced = clahe_soft.apply(v_ch)
+    else:
+        blue_enhanced = enhanced_soft
+        v_enhanced = enhanced_soft
 
     unsharp_soft = soft_unsharp_mask(enhanced_soft)
 
-    # 2. Thickened Grayscale (Erosion) to reconnect broken digit waists (e.g. '8' -> '4')
-    kernel_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    thick_gray = cv2.erode(gray, kernel_erode, iterations=1)
-    thick_enhanced = clahe_soft.apply(thick_gray)
+    # 2. Morphological Bridging (Erode -> Dilate pada teks gelap) untuk menyambung lengkungan '8' yang putus
+    kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    bridged_gray = cv2.morphologyEx(blue_enhanced, cv2.MORPH_OPEN, kernel_morph)
 
     # 3. BG Removal TopHat
     w_img = gray.shape[1]
@@ -183,9 +189,9 @@ def build_tier1_candidates(image: np.ndarray) -> list:
 
     return [
         ("Pure Grayscale (PSM 6)", gray, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("Soft CLAHE Grayscale (PSM 6)", enhanced_soft, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("Thickened Grayscale (PSM 6)", thick_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("Red Channel CLAHE (PSM 6)", red_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Blue Channel CLAHE (PSM 6)", blue_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("V-Channel CLAHE (PSM 6)", v_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Morphological Bridged Blue (PSM 6)", bridged_gray, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Soft Unsharp Mask (PSM 6)", unsharp_soft, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("BG Removal TopHat Mild (PSM 6)", unsharp_bg, "--oem 3 --psm 6 -c omp_thread_limit=1"),
     ]
@@ -264,7 +270,7 @@ def build_tier2_candidates(image: np.ndarray) -> list:
     # Adaptive Threshold C10 & Median Blur
     denoised_med = cv2.medianBlur(enhanced, 3)
     _, otsu_med = cv2.threshold(denoised_med, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    adaptive_c10 = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10)
+    adaptive_c10 = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 10)
 
     return [
         ("Illumination Norm + CLAHE (PSM 6)", enhanced_illum, "--oem 3 --psm 6 -c omp_thread_limit=1"),
@@ -292,20 +298,20 @@ def build_tier3_candidates(image: np.ndarray) -> list:
     gray_180 = cv2.cvtColor(img_180, cv2.COLOR_BGR2GRAY) if len(img_180.shape) == 3 else img_180
     gray_270 = cv2.cvtColor(img_270, cv2.COLOR_BGR2GRAY) if len(img_270.shape) == 3 else img_270
 
-    red_90 = img_90[:, :, 2] if len(img_90.shape) == 3 else gray_90
-    red_180 = img_180[:, :, 2] if len(img_180.shape) == 3 else gray_180
-    red_270 = img_270[:, :, 2] if len(img_270.shape) == 3 else gray_270
+    blue_90 = img_90[:, :, 0] if len(img_90.shape) == 3 else gray_90
+    blue_180 = img_180[:, :, 0] if len(img_180.shape) == 3 else gray_180
+    blue_270 = img_270[:, :, 0] if len(img_270.shape) == 3 else gray_270
 
-    red_enh_90 = clahe.apply(red_90)
-    red_enh_180 = clahe.apply(red_180)
-    red_enh_270 = clahe.apply(red_270)
+    blue_enh_90 = clahe.apply(blue_90)
+    blue_enh_180 = clahe.apply(blue_180)
+    blue_enh_270 = clahe.apply(blue_270)
 
     return [
-        ("Rotated 90 Red CLAHE (PSM 6)", red_enh_90, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Rotated 90 Blue CLAHE (PSM 6)", blue_enh_90, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Rotated 90 Pure (PSM 6)", gray_90, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("Rotated 180 Red CLAHE (PSM 6)", red_enh_180, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Rotated 180 Blue CLAHE (PSM 6)", blue_enh_180, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Rotated 180 Pure (PSM 6)", gray_180, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("Rotated 270 Red CLAHE (PSM 6)", red_enh_270, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Rotated 270 Blue CLAHE (PSM 6)", blue_enh_270, "--oem 3 --psm 6 -c omp_thread_limit=1"),
         ("Rotated 270 Pure (PSM 6)", gray_270, "--oem 3 --psm 6 -c omp_thread_limit=1"),
     ]
 
@@ -313,3 +319,58 @@ def build_tier3_candidates(image: np.ndarray) -> list:
 def build_candidates(image: np.ndarray) -> list:
     """Fallback kompatibilitas: mengembalikan seluruh kandidat menggabungkan Tier 1, 2, dan 3."""
     return build_tier1_candidates(image) + build_tier2_candidates(image) + build_tier3_candidates(image)
+
+
+def crop_roi_candidates(image: np.ndarray) -> list:
+    """
+    Pemotongan Region of Interest (ROI) untuk 4 field inti KTP (NIK, Nama, Tempat/Tgl Lahir).
+    Koordinat berbasis persentase dengan margin padding.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image.copy()
+    gray = deskew(gray)
+    h, w = gray.shape[:2]
+
+    # Pre-calculate channels for ROI extraction
+    if len(image.shape) == 3:
+        deskewed_color = deskew(image)
+        blue_ch = deskewed_color[:, :, 0]
+    else:
+        blue_ch = gray
+        deskewed_color = gray
+
+    # ROI NIK (Y: 18%-32%, X: 22%-95%)
+    nik_y1, nik_y2 = int(h * 0.16), int(h * 0.34)
+    nik_x1, nik_x2 = int(w * 0.20), int(w * 0.97)
+    nik_roi_gray = gray[max(0, nik_y1):min(h, nik_y2), max(0, nik_x1):min(w, nik_x2)]
+    
+    # Binarization untuk NIK
+    clahe_nik = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    nik_enhanced = clahe_nik.apply(nik_roi_gray)
+    _, nik_otsu = cv2.threshold(nik_enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    nik_closed = cv2.morphologyEx(nik_otsu, cv2.MORPH_CLOSE, kernel_morph)
+
+    # ROI Nama (Y: 30%-43%, X: 25%-75%)
+    nama_y1, nama_y2 = int(h * 0.28), int(h * 0.45)
+    nama_x1, nama_x2 = int(w * 0.23), int(w * 0.77)
+    nama_roi_blue = blue_ch[max(0, nama_y1):min(h, nama_y2), max(0, nama_x1):min(w, nama_x2)]
+    
+    # CLAHE Blue Channel untuk Nama
+    clahe_soft = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    nama_enhanced = clahe_soft.apply(nama_roi_blue)
+
+    # ROI Tempat & Tgl Lahir (Y: 38%-52%, X: 25%-75%)
+    ttl_y1, ttl_y2 = int(h * 0.36), int(h * 0.54)
+    ttl_x1, ttl_x2 = int(w * 0.23), int(w * 0.77)
+    ttl_roi_blue = blue_ch[max(0, ttl_y1):min(h, ttl_y2), max(0, ttl_x1):min(w, ttl_x2)]
+    
+    # CLAHE Blue Channel untuk TTL
+    ttl_enhanced = clahe_soft.apply(ttl_roi_blue)
+
+    # NIK Whitelist: 0-9
+    # Nama & TTL Whitelist: A-Z, spasi, koma, titik, strip, apostrof, 0-9
+    return [
+        ("ROI NIK (PSM 7)", nik_closed, "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789 -c omp_thread_limit=1"),
+        ("ROI Nama (PSM 7)", nama_enhanced, "--oem 3 --psm 7 -c tessedit_char_whitelist=\"ABCDEFGHIJKLMNOPQRSTUVWXYZ '.,-\" -c omp_thread_limit=1"),
+        ("ROI TTL (PSM 7)", ttl_enhanced, "--oem 3 --psm 7 -c tessedit_char_whitelist=\"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 '.,-\" -c omp_thread_limit=1"),
+    ]

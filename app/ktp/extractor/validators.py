@@ -215,3 +215,43 @@ def correct_tempat_lahir_fuzzy(tempat_lahir: Optional[str]) -> Optional[str]:
         return matches[0]
 
     return tempat_lahir
+
+
+def vote_nik_character_level(
+    base_nik: str, 
+    raw_texts: list[str], 
+    tanggal_lahir: str | None = None, 
+    jenis_kelamin: str | None = None
+) -> str:
+    """Melakukan Character-Level Consensus pada NIK digit 4 & 5 berdasarkan list raw_text kandidat."""
+    if not base_nik or len(base_nik) != 16:
+        return base_nik
+
+    from app.ktp.extractor.identity import extract_nik
+    nik_candidates = []
+    for raw in raw_texts:
+        if raw and raw.strip():
+            cand_nik = extract_nik(None, raw)
+            if cand_nik and len(cand_nik) == 16 and cand_nik.isdigit():
+                nik_candidates.append(cand_nik)
+
+    if len(nik_candidates) >= 2:
+        voted_chars = list(base_nik)
+        for idx in [4, 5]:
+            char_weights = {}
+            for rank, n_str in enumerate(nik_candidates):
+                c = n_str[idx]
+                weight = 1.0 - (rank * 0.01)
+                char_weights[c] = char_weights.get(c, 0.0) + weight
+            
+            voted_chars[idx] = max(char_weights.keys(), key=lambda k: char_weights[k])
+            
+        voted_nik = "".join(voted_chars)
+
+        if tanggal_lahir:
+            voted_nik = sync_nik_with_birthdate(voted_nik, tanggal_lahir, jenis_kelamin)
+
+        if voted_nik != base_nik and validate_nik_structure(voted_nik):
+            return voted_nik
+
+    return base_nik

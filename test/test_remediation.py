@@ -34,7 +34,9 @@ def test_tier1_candidates_order():
     
     names = [c[0] for c in candidates]
     assert names[0] == "Pure Grayscale (PSM 6)", "Pure Grayscale should be candidate #1"
-    assert names[1] == "Soft CLAHE Grayscale (PSM 6)", "Soft CLAHE Grayscale should be candidate #2"
+    assert names[1] == "Blue Channel CLAHE (PSM 6)", "Blue Channel CLAHE should be candidate #2"
+    assert names[2] == "V-Channel CLAHE (PSM 6)", "V-Channel CLAHE should be candidate #3"
+    assert names[3] == "Morphological Bridged Blue (PSM 6)", "Morphological Bridged Blue should be candidate #4"
 
 
 if __name__ == "__main__":
