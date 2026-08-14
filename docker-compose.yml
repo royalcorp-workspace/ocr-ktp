@@ -1,0 +1,28 @@
+services:
+  ocr-ktp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ocr-ktp
+    ports:
+      - "${PORT:-8011}:${PORT:-8011}"
+    volumes:
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - OMP_THREAD_LIMIT=1
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+      - OMP_WAIT_POLICY=PASSIVE
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 2048M
+        reservations:
+          cpus: '2.0'
+          memory: 512M

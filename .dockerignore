@@ -1,0 +1,36 @@
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environment & secrets
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+
+# Logs (di-mount via volume, gak perlu ikut di-build ke image)
+logs/
+
+# Test data & assets (gambar-gambar KTP gak perlu ikut image production)
+tests/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+scratch/
+README.md
+*.md
