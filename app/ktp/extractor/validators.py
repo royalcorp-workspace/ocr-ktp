@@ -46,20 +46,19 @@ def cross_validate_nik_header(nik: str, raw_text: str) -> bool:
         return True
 
     text_upper = raw_text.upper()
-    prov_header = None
-    for line in text_upper.splitlines():
-        if "PROVINSI" in line or "PROVINS" in line or "PROV" in line:
-            prov_header = line
-            break
-
-    if not prov_header:
-        return True
-
     detected_code = None
-    for p_name, p_code in PROVINCE_CODES.items():
-        if p_name in prov_header:
-            detected_code = p_code
-            break
+    for line in text_upper.splitlines():
+        if any(hdr in line for hdr in ["PROVINSI", "PROVINS", "PROV", "KABUPATEN", "KOTA"]):
+            for p_name, p_code in PROVINCE_CODES.items():
+                if p_name in line:
+                    detected_code = p_code
+                    break
+            if detected_code:
+                break
+
+    if not detected_code:
+        if any(kw in text_upper for kw in ["BANDUNG", "RANCAEKEK", "CIMAHI", "JAWA BARAT", "JABAR"]):
+            detected_code = "32"
 
     if not detected_code:
         return True
@@ -185,17 +184,9 @@ def sync_nik_with_birthdate(
         diff_indices = [i for i, (a, b) in enumerate(zip(actual_ddmmyy, target_ddmmyy)) if a != b]
         diff_count = len(diff_indices)
 
-        # 1. Jika NIK asli tidak valid strukturnya (karena OCR merusak digit tanggal), perbaiki langsung!
-        if not nik_is_currently_valid:
-            return candidate_nik
-
-        # 2. Jika 1-3 digit berbeda dan memenuhi confusion pair / batasan wajar
-        if 1 <= diff_count <= 3:
-            is_valid_confusion = all(
-                (actual_ddmmyy[idx], target_ddmmyy[idx]) in valid_confusion_pairs
-                for idx in diff_indices
-            )
-            if is_valid_confusion or diff_count <= 2:
+        if diff_count <= 3:
+            all_valid_pairs = all((actual_ddmmyy[i], target_ddmmyy[i]) in valid_confusion_pairs for i in diff_indices)
+            if all_valid_pairs and validate_nik_structure(candidate_nik):
                 return candidate_nik
 
     return nik
@@ -235,23 +226,91 @@ def vote_nik_character_level(
             if cand_nik and len(cand_nik) == 16 and cand_nik.isdigit():
                 nik_candidates.append(cand_nik)
 
-    if len(nik_candidates) >= 2:
+    if len(nik_candidates) >= 1:
         voted_chars = list(base_nik)
-        for idx in [4, 5]:
+        for idx in range(16):
             char_weights = {}
             for rank, n_str in enumerate(nik_candidates):
-                c = n_str[idx]
-                weight = 1.0 - (rank * 0.01)
-                char_weights[c] = char_weights.get(c, 0.0) + weight
+                if len(n_str) == 16:
+                    c = n_str[idx]
+                    weight = 1.0 - (rank * 0.01)
+                    char_weights[c] = char_weights.get(c, 0.0) + weight
             
-            voted_chars[idx] = max(char_weights.keys(), key=lambda k: char_weights[k])
+            if char_weights:
+                voted_chars[idx] = max(char_weights.keys(), key=lambda k: char_weights[k])
             
         voted_nik = "".join(voted_chars)
 
         if tanggal_lahir:
             voted_nik = sync_nik_with_birthdate(voted_nik, tanggal_lahir, jenis_kelamin)
 
-        if voted_nik != base_nik and validate_nik_structure(voted_nik):
+        if validate_nik_structure(voted_nik):
             return voted_nik
 
     return base_nik
+
+
+def is_nik_consistent_with_birthdate(
+    nik: Optional[str],
+    tanggal_lahir_str: Optional[str],
+    jenis_kelamin_str: Optional[str] = None
+) -> bool:
+    """
+    Evaluasi bi-directional kelayakan NIK terhadap Tanggal Lahir (DD-MM-YYYY) & Gender.
+    Menghasilkan True jika NIK 16-digit terstruktur valid dan konsisten dengan tanggal_lahir (atau ber-toleransi OCR noise).
+    """
+    if not nik or len(nik) != 16 or not nik.isdigit():
+        return False
+
+    if not validate_nik_structure(nik):
+        return False
+
+    if not tanggal_lahir_str or not isinstance(tanggal_lahir_str, str):
+        return True
+
+    parts = tanggal_lahir_str.strip().split('-')
+    if len(parts) != 3 or len(parts[0]) != 2 or len(parts[1]) != 2 or len(parts[2]) != 4:
+        return True
+
+    try:
+        d_target = int(parts[0])
+        m_target = int(parts[1])
+        y_target = parts[2][2:]
+    except ValueError:
+        return True
+
+    try:
+        actual_dd = int(nik[6:8])
+        actual_mm = int(nik[8:10])
+        actual_yy = nik[10:12]
+    except ValueError:
+        return False
+
+    target_dd_male = f"{d_target:02d}"
+    target_dd_female = f"{(d_target + 40):02d}"
+    target_mm = f"{m_target:02d}"
+
+    if (actual_mm == m_target) and (actual_yy == y_target):
+        if jenis_kelamin_str == "PEREMPUAN":
+            if f"{actual_dd:02d}" == target_dd_female:
+                return True
+        elif jenis_kelamin_str == "LAKI-LAKI":
+            if f"{actual_dd:02d}" == target_dd_male:
+                return True
+        else:
+            if f"{actual_dd:02d}" in (target_dd_male, target_dd_female):
+                return True
+
+    try:
+        import datetime
+        real_dd = actual_dd - 40 if actual_dd > 40 else actual_dd
+        real_yy = (1900 + int(actual_yy)) if int(actual_yy) > 26 else (2000 + int(actual_yy))
+        if 1 <= real_dd <= 31 and 1 <= actual_mm <= 12:
+            datetime.date(real_yy, actual_mm, real_dd)
+            synced = sync_nik_with_birthdate(nik, tanggal_lahir_str, jenis_kelamin_str)
+            if synced == nik or validate_nik_structure(synced):
+                return True
+    except (ValueError, OverflowError):
+        pass
+
+    return False

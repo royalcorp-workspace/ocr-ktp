@@ -401,6 +401,16 @@ def merge_roi_and_fallback_validate(
             if is_sane:
                 is_roi_valid = True
 
+        # Safeguard Lock NIK: Jika CONSENSUS/mobile_data sudah memiliki NIK 16-digit valid & konsisten DOB,
+        # Kunci nilai CONSENSUS agar ROI tidak bisa menimpa dengan hasil crop OCR yang rusak (Kategori A).
+        if field == "nik" and cg_val:
+            from app.ktp.extractor.validators import is_nik_consistent_with_birthdate
+            dob_check = consensus_general_data.get("tanggal_lahir", {}).get("value")
+            jk_check = consensus_general_data.get("jenis_kelamin", {}).get("value")
+            if is_nik_consistent_with_birthdate(str(cg_val), dob_check, jk_check):
+                if not final_roi_value or str(final_roi_value).strip() != str(cg_val).strip():
+                    is_roi_valid = False
+
         if field in ["nama", "pekerjaan", "kecamatan"] and cg_val:
             if field == "nama" and cg_val:
                 cg_val = re.sub(r'^\b(KAMA|NAMA|NAME)\b[\s:\._\-]*', '', str(cg_val), flags=re.IGNORECASE).strip()
