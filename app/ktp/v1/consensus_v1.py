@@ -94,7 +94,7 @@ def run_consensus_ocr_v1(image_bytes: bytes, mobile_data: dict) -> dict:
     voted_dob = consensus_general.get("tanggal_lahir", {}).get("value")
     voted_jk = consensus_general.get("jenis_kelamin", {}).get("value")
     if voted_nik and len(voted_nik) == 16 and voted_nik.isdigit():
-        from app.ktp.extractor.validators import is_nik_consistent_with_birthdate, sync_nik_with_birthdate, vote_nik_character_level
+        from app.ktp.extractor.validators import is_nik_consistent_with_birthdate, sync_nik_with_birthdate, vote_nik_character_level, validate_nik_structure
         if not is_nik_consistent_with_birthdate(voted_nik, voted_dob, voted_jk):
             all_raws = [c.get("raw_text", "") for c in all_ocr_results if c.get("raw_text")]
             refined_nik = vote_nik_character_level(voted_nik, all_raws, voted_dob, voted_jk)

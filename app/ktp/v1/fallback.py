@@ -302,23 +302,6 @@ def merge_roi_and_fallback_extract(
 
                 if not merged.get("kewarganegaraan") or not merged["kewarganegaraan"].value:
                     merged["kewarganegaraan"] = FieldWithSource(value="WNI", confidence=85.0, source="GENERAL")
-
-                if merged_nik.startswith("320428"):
-                    if not merged.get("kecamatan") or not merged["kecamatan"].value:
-                        merged["kecamatan"] = FieldWithSource(value="RANCAEKEK", confidence=85.0, source="GENERAL")
-                    if not merged.get("kelurahan_desa") or not merged["kelurahan_desa"].value or len(str(merged["kelurahan_desa"].value)) > 20:
-                        merged["kelurahan_desa"] = FieldWithSource(value="JELEGONG", confidence=80.0, source="GENERAL")
-
-                if merged_nik == "3204281408960002" or merged_nik.startswith("320428140896"):
-                    from app.ktp.extractor.identity import assess_name_quality
-                    curr_name = merged.get("nama").value if merged.get("nama") else None
-                    if not curr_name or not assess_name_quality(curr_name):
-                        merged["nama"] = FieldWithSource(value="ANDRI MAULANA", confidence=90.0, source="GENERAL")
-                    curr_addr = merged.get("alamat").value if merged.get("alamat") else ""
-                    if not curr_addr or any(b in str(curr_addr).upper() for b in ["ENGGARAA", "AMAR", "SEK", "RN"]):
-                        merged["alamat"] = FieldWithSource(value="KP. LINGGARJATI", confidence=85.0, source="GENERAL")
-                    if not merged.get("rt_rw") or not merged["rt_rw"].value:
-                        merged["rt_rw"] = FieldWithSource(value="003/014", confidence=80.0, source="GENERAL")
         except ValueError:
             pass
 
@@ -405,14 +388,11 @@ def merge_roi_and_fallback_validate(
         # Safeguard Lock NIK: Jika CONSENSUS/mobile_data sudah memiliki NIK 16-digit valid & konsisten DOB,
         # Kunci nilai CONSENSUS agar ROI tidak bisa menimpa dengan hasil crop OCR yang rusak (Kategori A).
         if field == "nik" and cg_val:
-            from app.ktp.extractor.validators import is_nik_consistent_with_birthdate
+            from app.ktp.extractor.validators import validate_nik_structure
             cleaned_cg_nik = re.sub(r'\D', '', str(cg_val))
             if len(cleaned_cg_nik) == 16:
                 cg_val = cleaned_cg_nik
-            dob_check = consensus_general_data.get("tanggal_lahir", {}).get("value")
-            jk_check = consensus_general_data.get("jenis_kelamin", {}).get("value")
-            if is_nik_consistent_with_birthdate(str(cg_val), dob_check, jk_check):
-                if not final_roi_value or str(final_roi_value).strip() != str(cg_val).strip():
+                if validate_nik_structure(cg_val):
                     is_roi_valid = False
 
         if field in ["nama", "pekerjaan", "kecamatan"] and cg_val:
@@ -466,25 +446,6 @@ def merge_roi_and_fallback_validate(
 
                 if not merged.get("kewarganegaraan") or not merged["kewarganegaraan"].value:
                     merged["kewarganegaraan"] = FieldWithSource(value="WNI", confidence=85.0, source="CONSENSUS")
-
-                if merged_nik.startswith("320428"):
-                    if not merged.get("kecamatan") or not merged["kecamatan"].value:
-                        merged["kecamatan"] = FieldWithSource(value="RANCAEKEK", confidence=85.0, source="CONSENSUS")
-                    if not merged.get("kelurahan_desa") or not merged["kelurahan_desa"].value or len(str(merged["kelurahan_desa"].value)) > 20:
-                        merged["kelurahan_desa"] = FieldWithSource(value="JELEGONG", confidence=80.0, source="CONSENSUS")
-
-                if merged_nik == "3204281408960002" or merged_nik.startswith("320428140896"):
-                    from app.ktp.extractor.identity import assess_name_quality
-                    curr_name = merged.get("nama").value if merged.get("nama") else None
-                    if not curr_name or not assess_name_quality(curr_name):
-                        merged["nama"] = FieldWithSource(value="ANDRI MAULANA", confidence=90.0, source="CONSENSUS")
-                    curr_addr = merged.get("alamat").value if merged.get("alamat") else ""
-                    if not curr_addr or any(b in str(curr_addr).upper() for b in ["ENGGARAA", "AMAR", "SEK", "RN"]):
-                        merged["alamat"] = FieldWithSource(value="KP. LINGGARJATI", confidence=85.0, source="CONSENSUS")
-                    if not merged.get("rt_rw") or not merged["rt_rw"].value:
-                        merged["rt_rw"] = FieldWithSource(value="003/014", confidence=80.0, source="CONSENSUS")
-                    if not merged.get("agama") or not merged["agama"].value:
-                        merged["agama"] = FieldWithSource(value="ISLAM", confidence=85.0, source="CONSENSUS")
         except ValueError:
             pass
 

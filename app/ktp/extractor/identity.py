@@ -257,8 +257,6 @@ def extract_nama(block: Optional[str], full_text: str = "") -> Optional[str]:
             val_cand = truncate_at_stop_fragments(val_cand)
             val_cand = clean_nama_prefix(val_cand)
             val_cand = clean_nama_suffix(val_cand)
-            val_cand = re.sub(r'\bYAR[EI]RISNANDAR\b', 'YARI RISNANDAR', val_cand)
-            val_cand = re.sub(r'\bANDRIMAULANA\b', 'ANDRI MAULANA', val_cand)
 
             if len(val_cand) >= 2 and not any(re.search(kw, val_cand, re.IGNORECASE) for kw in BOUNDARY_KEYWORDS):
                 if assess_name_quality(val_cand):
@@ -320,8 +318,6 @@ def extract_nama(block: Optional[str], full_text: str = "") -> Optional[str]:
             clean_line = truncate_at_stop_fragments(clean_line)
             clean_line = clean_nama_prefix(clean_line)
             clean_line = clean_nama_suffix(clean_line)
-            clean_line = re.sub(r'\bYAR[EI]RISNANDAR\b', 'YARI RISNANDAR', clean_line)
-            clean_line = re.sub(r'\bANDRIMAULANA\b', 'ANDRI MAULANA', clean_line)
 
             noise_tokens = {"NO", "RT", "RW", "JL", "DS", "KP", "GOL", "KTP", "NIK", "LIO", "SO", "PE", "DA"}
             tokens = [t for t in clean_line.split() if t not in noise_tokens and t not in header_noise_fragments]
