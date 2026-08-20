@@ -257,7 +257,12 @@ def is_nik_consistent_with_birthdate(
 ) -> bool:
     """
     Evaluasi bi-directional kelayakan NIK terhadap Tanggal Lahir (DD-MM-YYYY) & Gender.
-    Menghasilkan True jika NIK 16-digit terstruktur valid dan konsisten dengan tanggal_lahir (atau ber-toleransi OCR noise).
+    Menghasilkan True jika:
+    1. NIK 16-digit valid secara struktur (validate_nik_structure).
+    2. Tanggal lahir kosong/invalid -> dianggap True (karena tidak ada acuan pembanding).
+    3. Tanggal lahir valid -> Bulan (MM) & Tahun (YY) HARUS PERSIS sama antara NIK dan DOB.
+       Hari (DD) harus match persis (termasuk +40 untuk perempuan), ATAU jika berbeda,
+       perbedaannya HARUS terbatas pada pasangan OCR visual confusion yang valid (5<->6, 1<->7, 3<->8, 0<->8, dll).
     """
     if not nik or len(nik) != 16 or not nik.isdigit():
         return False
@@ -286,31 +291,50 @@ def is_nik_consistent_with_birthdate(
     except ValueError:
         return False
 
+    # 1. BULAN (MM) & TAHUN (YY) HARUS PERSIS SAMA (Bulan & Tahun tidak boleh beda!)
+    if actual_mm != m_target or actual_yy != y_target:
+        return False
+
+    # 2. HARI (DD): Target DD Laki-laki (DD) & Perempuan (DD + 40)
     target_dd_male = f"{d_target:02d}"
     target_dd_female = f"{(d_target + 40):02d}"
-    target_mm = f"{m_target:02d}"
+    actual_dd_str = f"{actual_dd:02d}"
 
-    if (actual_mm == m_target) and (actual_yy == y_target):
-        if jenis_kelamin_str == "PEREMPUAN":
-            if f"{actual_dd:02d}" == target_dd_female:
-                return True
-        elif jenis_kelamin_str == "LAKI-LAKI":
-            if f"{actual_dd:02d}" == target_dd_male:
-                return True
-        else:
-            if f"{actual_dd:02d}" in (target_dd_male, target_dd_female):
-                return True
+    if jenis_kelamin_str == "PEREMPUAN":
+        if actual_dd_str == target_dd_female:
+            return True
+    elif jenis_kelamin_str == "LAKI-LAKI":
+        if actual_dd_str == target_dd_male:
+            return True
+    else:
+        if actual_dd_str in (target_dd_male, target_dd_female):
+            return True
 
-    try:
-        import datetime
-        real_dd = actual_dd - 40 if actual_dd > 40 else actual_dd
-        real_yy = (1900 + int(actual_yy)) if int(actual_yy) > 26 else (2000 + int(actual_yy))
-        if 1 <= real_dd <= 31 and 1 <= actual_mm <= 12:
-            datetime.date(real_yy, actual_mm, real_dd)
-            synced = sync_nik_with_birthdate(nik, tanggal_lahir_str, jenis_kelamin_str)
-            if synced == nik or validate_nik_structure(synced):
-                return True
-    except (ValueError, OverflowError):
-        pass
+    # 3. Toleransi HARI (DD) HANYA untuk Pasangan OCR Visual Confusion
+    valid_confusion_pairs = {
+        ('5', '6'), ('6', '5'), ('0', '6'), ('6', '0'),
+        ('1', '7'), ('7', '1'), ('3', '8'), ('8', '3'),
+        ('0', '8'), ('8', '0'), ('1', '9'), ('9', '1'),
+        ('0', '5'), ('5', '0'), ('0', '1'), ('1', '0'),
+        ('1', '4'), ('4', '1'), ('2', '3'), ('3', '2'),
+        ('4', '9'), ('9', '4'), ('5', '9'), ('9', '5'),
+        ('0', '9'), ('9', '0'), ('1', '3'), ('3', '1'),
+        ('2', '8'), ('8', '2'), ('1', '6'), ('6', '1'),
+    }
+
+    targets_to_check = []
+    if jenis_kelamin_str == "PEREMPUAN":
+        targets_to_check.append(target_dd_female)
+    elif jenis_kelamin_str == "LAKI-LAKI":
+        targets_to_check.append(target_dd_male)
+    else:
+        targets_to_check.extend([target_dd_male, target_dd_female])
+
+    for target_dd_str in targets_to_check:
+        if len(actual_dd_str) == 2 and len(target_dd_str) == 2:
+            diff_indices = [i for i in range(2) if actual_dd_str[i] != target_dd_str[i]]
+            if 1 <= len(diff_indices) <= 2:
+                if all((actual_dd_str[i], target_dd_str[i]) in valid_confusion_pairs for i in diff_indices):
+                    return True
 
     return False
