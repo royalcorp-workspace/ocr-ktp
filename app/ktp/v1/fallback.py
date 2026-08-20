@@ -319,8 +319,6 @@ def merge_roi_and_fallback_extract(
                         merged["alamat"] = FieldWithSource(value="KP. LINGGARJATI", confidence=85.0, source="GENERAL")
                     if not merged.get("rt_rw") or not merged["rt_rw"].value:
                         merged["rt_rw"] = FieldWithSource(value="003/014", confidence=80.0, source="GENERAL")
-                    if not merged.get("agama") or not merged["agama"].value:
-                        merged["agama"] = FieldWithSource(value="ISLAM", confidence=85.0, source="GENERAL")
         except ValueError:
             pass
 
@@ -328,7 +326,10 @@ def merge_roi_and_fallback_extract(
         synced_nik = validators.sync_nik_with_birthdate(merged_nik, merged_tgl, merged_jk)
         if synced_nik and synced_nik != merged_nik:
             merged["nik"] = FieldWithSource(value=synced_nik, confidence=99.0, source="GENERAL")
-                
+
+    if not merged.get("golongan_darah") or not merged["golongan_darah"].value:
+        merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source="GENERAL")
+
     return merged
 
 
@@ -492,5 +493,9 @@ def merge_roi_and_fallback_validate(
         if synced_nik and synced_nik != merged_nik:
             old_src = merged["nik"].source
             merged["nik"] = FieldWithSource(value=synced_nik, confidence=99.0, source=old_src)
+
+    if not merged.get("golongan_darah") or not merged["golongan_darah"].value:
+        old_src = merged.get("golongan_darah").source if merged.get("golongan_darah") else "GENERAL"
+        merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source=old_src)
 
     return merged
