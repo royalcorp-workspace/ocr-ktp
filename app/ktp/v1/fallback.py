@@ -405,6 +405,9 @@ def merge_roi_and_fallback_validate(
         # Kunci nilai CONSENSUS agar ROI tidak bisa menimpa dengan hasil crop OCR yang rusak (Kategori A).
         if field == "nik" and cg_val:
             from app.ktp.extractor.validators import is_nik_consistent_with_birthdate
+            cleaned_cg_nik = re.sub(r'\D', '', str(cg_val))
+            if len(cleaned_cg_nik) == 16:
+                cg_val = cleaned_cg_nik
             dob_check = consensus_general_data.get("tanggal_lahir", {}).get("value")
             jk_check = consensus_general_data.get("jenis_kelamin", {}).get("value")
             if is_nik_consistent_with_birthdate(str(cg_val), dob_check, jk_check):
