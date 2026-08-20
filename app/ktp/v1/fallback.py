@@ -251,9 +251,11 @@ def merge_roi_and_fallback_extract(
             else:
                 logger.info(f"[ROI DEBUG] Field '{field}' rejected by sanity check: {reason}")
 
-        # Smart merge for NAMA & PEKERJAAN: If General OCR produced a valid sane value with good confidence,
-        # prefer General OCR unless ROI has strictly higher confidence
-        if field in ["nama", "pekerjaan", "kecamatan"] and general_text:
+        # Smart Safeguard Lock for all fields in extract merge:
+        # If General OCR produced a valid sane value, prefer General OCR unless ROI has strictly higher confidence
+        if general_text:
+            if field == "nama":
+                general_text = re.sub(r'^\b(KAMA|NAMA|NAME)\b[\s:\._\-]*', '', str(general_text), flags=re.IGNORECASE).strip()
             is_gen_sane, _ = _sanity_check_free_text(field, str(general_text))
             if is_gen_sane and (not is_roi_valid or gen_calibrated_conf >= roi_calibrated_conf):
                 is_roi_valid = False
@@ -395,7 +397,9 @@ def merge_roi_and_fallback_validate(
                 if validate_nik_structure(cg_val):
                     is_roi_valid = False
 
-        if field in ["nama", "pekerjaan", "kecamatan"] and cg_val:
+        # Smart Safeguard Lock for all other fields in validate merge:
+        # If consensus/mobile_data produced a valid sane value, protect it unless ROI has strictly higher confidence
+        if field != "nik" and cg_val:
             if field == "nama" and cg_val:
                 cg_val = re.sub(r'^\b(KAMA|NAMA|NAME)\b[\s:\._\-]*', '', str(cg_val), flags=re.IGNORECASE).strip()
             is_cg_sane, _ = _sanity_check_free_text(field, str(cg_val))
