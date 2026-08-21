@@ -79,9 +79,10 @@ def run_consensus_ocr_v1(image_bytes: bytes, mobile_data: dict) -> dict:
         for cand in candidate_extractions:
             cand_val = cand["parsed"].get(field)
             if cand_val and str(cand_val).strip():
+                cand_conf = min(95.0, float(cand["score"])) if float(cand["score"]) > 100.0 else float(cand["score"])
                 tess_entries.append({
                     "value": str(cand_val).strip(),
-                    "confidence": float(cand["score"]),
+                    "confidence": cand_conf,
                     "candidate_name": cand["name"]
                 })
         
