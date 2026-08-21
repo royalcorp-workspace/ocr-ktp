@@ -236,6 +236,52 @@ def clean_nama_suffix(text: str) -> str:
     return " ".join(tokens).strip()
 
 
+def segment_concatenated_name(name_str: str) -> str:
+    """
+    Generic Name Word-Segmenter:
+    Membagi kata nama tunggal panjang (misal 'YARIRISNANDAR' -> 'YARI RISNANDAR')
+    berdasarkan Kamus Nama Indonesia Generik (30.000+ token) dan Skor Suku Kata (Syllable Score).
+    Safe Fallback: Jika confidence score < 85%, kembalikan string asli tanpa diubah.
+    """
+    if not name_str:
+        return name_str
+
+    tokens = name_str.strip().upper().split()
+    if len(tokens) != 1 or len(tokens[0]) < 8 or not tokens[0].isalpha():
+        return name_str
+
+    word = tokens[0]
+    n = len(word)
+    from app.ktp.resources.indonesian_names import INDONESIAN_NAME_TOKENS
+
+    best_split = None
+    max_score = 0.0
+
+    for i in range(3, n - 2):
+        w1 = word[:i]
+        w2 = word[i:]
+
+        w1_known = 1.0 if w1 in INDONESIAN_NAME_TOKENS else 0.0
+        w2_known = 1.0 if w2 in INDONESIAN_NAME_TOKENS else 0.0
+
+        lexicon_score = (w1_known + w2_known) / 2.0
+
+        syllable_score = 1.0
+        if re.search(r'^(RR|RN|SN|TN|DN|KN|MN|LN)', w2):
+            syllable_score = 0.4
+
+        total_score = 0.5 * lexicon_score + 0.5 * syllable_score
+
+        if total_score > max_score:
+            max_score = total_score
+            best_split = f"{w1} {w2}"
+
+    if max_score >= 0.85 and best_split:
+        return best_split
+
+    return name_str
+
+
 def extract_nama(block: Optional[str], full_text: str = "") -> Optional[str]:
     val = None
     if block:
@@ -335,6 +381,8 @@ def extract_nama(block: Optional[str], full_text: str = "") -> Optional[str]:
                         val = clean_line
                         break
 
+    if val:
+        val = segment_concatenated_name(val)
     return val
 
 

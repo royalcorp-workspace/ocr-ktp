@@ -159,7 +159,7 @@ def sync_nik_with_birthdate(
 
     actual_ddmmyy = nik[6:12]
 
-    # Pasangan karakter confusion OCR visual yang umum
+    # Pasangan karakter confusion OCR visual yang umum (misal '07' terbaca '14')
     valid_confusion_pairs = {
         ('5', '6'), ('6', '5'), ('0', '6'), ('6', '0'),
         ('1', '7'), ('7', '1'), ('3', '8'), ('8', '3'),
@@ -169,6 +169,7 @@ def sync_nik_with_birthdate(
         ('4', '9'), ('9', '4'), ('5', '9'), ('9', '5'),
         ('0', '9'), ('9', '0'), ('1', '3'), ('3', '1'),
         ('2', '8'), ('8', '2'), ('1', '6'), ('6', '1'),
+        ('7', '4'), ('4', '7'), ('0', '7'), ('7', '0'),
     }
 
     nik_is_currently_valid = validate_nik_structure(nik)
