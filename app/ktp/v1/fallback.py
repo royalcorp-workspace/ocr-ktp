@@ -406,7 +406,7 @@ def merge_roi_and_fallback_validate(
             if field == "nama" and cg_val:
                 cg_val = re.sub(r'^\b(KAMA|NAMA|NAME)\b[\s:\._\-]*', '', str(cg_val), flags=re.IGNORECASE).strip()
             is_cg_sane, _ = _sanity_check_free_text(field, str(cg_val))
-            if is_cg_sane and (not is_roi_valid or cg_conf >= roi_calibrated_conf):
+            if is_cg_sane:
                 is_roi_valid = False
 
         if is_roi_valid:

@@ -197,9 +197,9 @@ def _vote_field(
                 cand_effective_score = cand_max_conf if cand_voter_count == 1 else cand_avg_conf
 
                 # Tesseract Override Gate:
-                # 1. Single candidate max conf >= 90.0, OR
+                # 1. Single candidate max conf >= 98.0, OR
                 # 2. Konsensus Mutlak Tesseract: N >= 2 candidates AND average conf >= 85.0
-                is_single_strong = cand_max_conf >= 90.0
+                is_single_strong = cand_max_conf >= 98.0
                 is_absolute_consensus = (cand_voter_count >= 2 and cand_avg_conf >= 85.0)
 
                 if is_single_strong or is_absolute_consensus:
@@ -216,8 +216,8 @@ def _vote_field(
 
     if is_mob_strong and mob_key in target_scores and winner_key != mob_key:
         score_diff = target_scores[winner_key] - target_scores[mob_key]
-        if score_diff <= 2.0:
-            winner_key = mob_key  # TIE-BREAKER: mobile_data wins ties or <= 2.0 diff!
+        if score_diff <= 10.0:
+            winner_key = mob_key  # TIE-BREAKER: mobile_data wins ties or <= 10.0 diff!
 
     winning_value = vote_originals[winner_key]
     if field == "alamat" and winning_value:
