@@ -23,12 +23,12 @@ def extract_agama(block: Optional[str], full_text: str = "") -> Optional[str]:
     text_to_check = None
     if block and block.strip():
         text_to_check = block
-    elif full_text and full_text.strip():
-        # Require explicit label anchor when searching full_text
+    if not text_to_check and full_text and full_text.strip():
+        # Searching full_text lines for explicit Agama keywords or known religion values
         for line in full_text.splitlines():
-            m = re.search(r'\b(AGAMA|Agama|gama|AGAM)\b', line, re.IGNORECASE)
-            if m:
-                text_to_check = line[m.end():].strip()
+            line_up = line.upper()
+            if any(k in line_up for k in ["AGAMA", "AGAM", "ISLAM", "KRISTEN", "KATHOLIK", "KATOLIK", "HINDU", "BUDDHA", "BUDHA", "KHONGHUCU", "KONGHUCU"]):
+                text_to_check = line
                 break
 
     if not text_to_check:
@@ -113,6 +113,14 @@ def extract_pekerjaan(block: Optional[str], full_text: str = "") -> Optional[str
                     if "PELAJAR" in std and "MAHASISWA" in std:
                         return "PELAJAR/MAHASISWA"
                     return std
+                    
+            # Fallback ke fuzzy match untuk typo (misal "A H HARIAN LEPAS" -> "BURUH HARIAN LEPAS")
+            matches = difflib.get_close_matches(val, std_jobs, n=1, cutoff=0.65)
+            if matches:
+                if "PELAJAR" in matches[0] and "MAHASISWA" in matches[0]:
+                    return "PELAJAR/MAHASISWA"
+                return matches[0]
+                
             return val
 
     if full_text and full_text.strip():

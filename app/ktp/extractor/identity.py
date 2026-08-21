@@ -577,24 +577,19 @@ def extract_golongan_darah(gol_block: Optional[str], full_text: str) -> Optional
         for line in full_text.splitlines():
             line_upper = line.upper()
             if any(kw in line_upper for kw in ["GOL", "DARAH"]):
-                match = re.search(r'GOL[\.\s]*DARAH[\s:\.=-]*(\S+)', line, re.IGNORECASE)
+                match = re.search(r'GOL[\.\s]*DARAH[\s:\.=-]*([A-Z0-9\+\-]+)', line, re.IGNORECASE)
                 if match:
                     text_to_check = match.group(1)
                     break
-                if "DARAH" in line_upper or "GOL" in line_upper:
-                    text_to_check = line_upper
-                    break
+                text_to_check = line_upper
+                break
 
     text_upper = text_to_check.upper().strip()
 
     if not text_upper:
         return "-"
 
-    if re.search(r'(?<![A-Z])-(?![A-Z])', text_to_check) or "NIHIL" in text_upper or "TIADA" in text_upper:
-        return "-"
-    if text_upper.strip() in ("-", "NO"):
-        return "-"
-
+    # Prioritaskan pencocokan tipe darah A, B, AB, O bila secara eksplisit ada di baris
     if re.search(r'\bAB\b', text_upper):
         return "AB"
     if re.search(r'\bA\b', text_upper):
@@ -603,5 +598,8 @@ def extract_golongan_darah(gol_block: Optional[str], full_text: str) -> Optional
         return "B"
     if re.search(r'\b[O0]\b', text_upper):
         return "O"
+
+    if re.search(r'(?<![A-Z])-(?![A-Z])', text_to_check) or "NIHIL" in text_upper or "TIADA" in text_upper or text_upper.strip() in ("-", "NO"):
+        return "-"
 
     return "-"
