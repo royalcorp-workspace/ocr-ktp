@@ -4,14 +4,19 @@ import pytesseract
 from app.core.logging_config import ktp_logger as logger
 
 
-def deskew(gray: np.ndarray) -> np.ndarray:
+def deskew(image: np.ndarray) -> np.ndarray:
     """Koreksi kemiringan foto KTP. Kegagalan tidak boleh menjatuhkan pipeline."""
     try:
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         coords = np.column_stack(np.where(thresh > 0))
 
         if coords.shape[0] < 50:
-            return gray
+            return image
 
         coords = coords.astype(np.float32)
         angle = cv2.minAreaRect(coords)[-1]
@@ -21,16 +26,16 @@ def deskew(gray: np.ndarray) -> np.ndarray:
             angle = -angle
 
         if abs(angle) < 0.5 or abs(angle) > 15:
-            return gray
+            return image
 
-        (h, w) = gray.shape[:2]
+        (h, w) = image.shape[:2]
         center = (w // 2, h // 2)
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        rotated = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         return rotated
     except Exception as e:
         logger.warning(f"Deskew gagal, lanjut tanpa koreksi kemiringan: {e}")
-        return gray
+        return image
 
 
 def hough_deskew(gray: np.ndarray) -> np.ndarray:
@@ -133,15 +138,21 @@ def resize_if_small(image: np.ndarray, target_width: int = 1600) -> np.ndarray:
 
 def normalize_image_size(image: np.ndarray, target_width: int = 1600, max_width: int = 1800) -> np.ndarray:
     """
+def normalize_image_dimensions(image: np.ndarray, target_width: int = 1280, max_width: int = 2000) -> np.ndarray:
+    """
     Normalisasi ukuran gambar KTP:
     - Jika width > max_width (kamera HP 4K/8K): downscale ke max_width menggunakan INTER_AREA.
-    - Jika width < target_width (gambar kecil/crop): upscale ke target_width menggunakan INTER_LANCZOS4.
+    - Jika width < target_width (gambar kecil/crop < 600px): upscale ke target_width menggunakan INTER_LANCZOS4.
     """
     height, width = image.shape[:2]
     if width > max_width:
         scale_factor = max_width / width
         new_height = int(height * scale_factor)
         image = cv2.resize(image, (max_width, new_height), interpolation=cv2.INTER_AREA)
+    elif width < 600:
+        scale_factor = 1280.0 / width
+        new_height = int(height * scale_factor)
+        image = cv2.resize(image, (1280, new_height), interpolation=cv2.INTER_LANCZOS4)
     elif width < target_width:
         scale_factor = target_width / width
         new_height = int(height * scale_factor)
@@ -151,15 +162,20 @@ def normalize_image_size(image: np.ndarray, target_width: int = 1600, max_width:
 
 def build_tier1_candidates(image: np.ndarray) -> list:
     """
-    Tier 1: 5 Kandidat tercepat dan memprioritaskan piksel grayscale alami gambar.
+    Tier 1: Kandidat tercepat memprioritaskan piksel grayscale alami & variasi PSM (PSM 6, PSM 11, PSM 3).
     """
+    height, width = image.shape[:2]
+    if width < 600:
+        scale = 1280.0 / width
+        image = cv2.resize(image, (1280, int(height * scale)), interpolation=cv2.INTER_LANCZOS4)
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image.copy()
     gray = deskew(gray)
 
-    clahe_soft = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    clahe_soft = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced_soft = clahe_soft.apply(gray)
 
-    # 1. Blue Channel & V-Channel Optimization (membuang background biru KTP, kontras teks maksimal)
+    # 1. Blue Channel & V-Channel Optimization
     if len(image.shape) == 3:
         blue_ch = deskew(image[:, :, 0])
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -172,28 +188,13 @@ def build_tier1_candidates(image: np.ndarray) -> list:
 
     unsharp_soft = soft_unsharp_mask(enhanced_soft)
 
-    # 2. Morphological Bridging (Erode -> Dilate pada teks gelap) untuk menyambung lengkungan '8' yang putus
-    kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    bridged_gray = cv2.morphologyEx(blue_enhanced, cv2.MORPH_OPEN, kernel_morph)
-
-    # 3. BG Removal TopHat
-    w_img = gray.shape[1]
-    k_width = max(15, min(50, w_img // 40))
-    kernel_bg = cv2.getStructuringElement(cv2.MORPH_RECT, (k_width, 1))
-    morph_open = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel_bg)
-    bg_removed = cv2.absdiff(gray, morph_open)
-    bg_removed = cv2.bitwise_not(bg_removed)
-    bilateral_bg = cv2.bilateralFilter(bg_removed, d=9, sigmaColor=75, sigmaSpace=75)
-    gaussian_bg = cv2.GaussianBlur(bilateral_bg, (0, 0), 2.0)
-    unsharp_bg = cv2.addWeighted(bilateral_bg, 1.5, gaussian_bg, -0.5, 0)
-
     return [
         ("Pure Grayscale (PSM 6)", gray, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Pure Grayscale Sparse (PSM 11)", gray, "--oem 3 --psm 11 -c omp_thread_limit=1"),
         ("Blue Channel CLAHE (PSM 6)", blue_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Blue Channel CLAHE Sparse (PSM 11)", blue_enhanced, "--oem 3 --psm 11 -c omp_thread_limit=1"),
         ("V-Channel CLAHE (PSM 6)", v_enhanced, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("Morphological Bridged Blue (PSM 6)", bridged_gray, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("Soft Unsharp Mask (PSM 6)", unsharp_soft, "--oem 3 --psm 6 -c omp_thread_limit=1"),
-        ("BG Removal TopHat Mild (PSM 6)", unsharp_bg, "--oem 3 --psm 6 -c omp_thread_limit=1"),
+        ("Soft Unsharp Mask (PSM 3)", unsharp_soft, "--oem 3 --psm 3 -c omp_thread_limit=1"),
     ]
 
 
