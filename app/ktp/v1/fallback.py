@@ -390,6 +390,22 @@ def merge_roi_and_fallback_validate(
             if is_sane:
                 is_roi_valid = True
 
+        # ROI Garble Protection ketika cg_val null:
+        # Jika tidak ada nilai dari consensus/mobile (cg_val None), naikkan threshold ROI ke 90.0
+        # dan tolak ROI yang mengandung terlalu banyak noise token (>30% non-alpha)
+        if is_roi_valid and not cg_val:
+            _STRICT_ROI_FIELDS = {"nama", "tempat_lahir", "alamat", "kelurahan_desa", "kecamatan", "agama", "status_perkawinan", "pekerjaan"}
+            if field in _STRICT_ROI_FIELDS:
+                # Naikkan threshold
+                if roi_calibrated_conf < 90.0:
+                    is_roi_valid = False
+                else:
+                    # Cek noise token ratio
+                    roi_tokens = str(final_roi_value).split()
+                    noise_count = sum(1 for t in roi_tokens if not re.search(r'[A-Za-z0-9]', t))
+                    if roi_tokens and (noise_count / len(roi_tokens)) > 0.30:
+                        is_roi_valid = False
+
         # Safeguard Lock NIK: Jika CONSENSUS/mobile_data sudah memiliki NIK 16-digit valid & konsisten DOB,
         # Kunci nilai CONSENSUS agar ROI tidak bisa menimpa dengan hasil crop OCR yang rusak (Kategori A).
         if field == "nik" and cg_val:
@@ -422,6 +438,30 @@ def merge_roi_and_fallback_validate(
                 confidence=cg_conf,
                 source=mapped_source
             )
+
+    # Post-processing: Length Sanity Check & Agama Whitelist
+    _AGAMA_WHITELIST = {"ISLAM", "KRISTEN", "KATHOLIK", "KATOLIK", "HINDU", "BUDHA", "BUDDHA", "KONGHUCU"}
+    _NONSENSICAL_FIELDS = {"nama", "tempat_lahir", "kelurahan_desa", "kecamatan"}
+    for _field, _fobj in merged.items():
+        if _fobj and _fobj.value:
+            _val = str(_fobj.value).strip()
+            # Field pendek (< 3 karakter) pada field terstruktur → null
+            if _field in _NONSENSICAL_FIELDS and len(_val) < 3:
+                merged[_field] = FieldWithSource(value=None, confidence=0.0, source="GENERAL")
+                continue
+            # kecamatan/kelurahan: >50% token non-alpha → null
+            if _field in {"kecamatan", "kelurahan_desa"}:
+                _tokens = _val.split()
+                _noise = sum(1 for t in _tokens if not re.sub(r'[^A-Za-z]', '', t))
+                if _tokens and (_noise / len(_tokens)) > 0.5:
+                    merged[_field] = FieldWithSource(value=None, confidence=0.0, source="GENERAL")
+                    continue
+            # Agama whitelist validation
+            if _field == "agama":
+                _normalized = re.sub(r'[^A-Z]', '', _val.upper())
+                _match = any(_normalized in a.replace(" ", "") or a.replace(" ", "") in _normalized for a in _AGAMA_WHITELIST)
+                if not _match:
+                    merged[_field] = FieldWithSource(value=None, confidence=0.0, source="GENERAL")
                 
     # Post-Merge Validasi NIK dengan Tanggal Lahir & Jenis Kelamin pada Validate
     from app.ktp.extractor import validators

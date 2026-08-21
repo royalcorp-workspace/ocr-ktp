@@ -199,8 +199,11 @@ def _vote_field(
                 # Tesseract Override Gate:
                 # 1. Single candidate max conf >= 98.0, OR
                 # 2. Konsensus Mutlak Tesseract: N >= 2 candidates AND average conf >= 85.0
+                #    (P2.2: kandidat tsb juga harus lulus sanity check)
                 is_single_strong = cand_max_conf >= 98.0
-                is_absolute_consensus = (cand_voter_count >= 2 and cand_avg_conf >= 85.0)
+                _cand_orig = vote_originals.get(key, "")
+                _cand_sane, _ = _sanity_check_free_text(field, _cand_orig) if _cand_orig else (False, "empty")
+                is_absolute_consensus = (cand_voter_count >= 2 and cand_avg_conf >= 85.0 and _cand_sane)
 
                 if is_single_strong or is_absolute_consensus:
                     filtered_scores[key] = cand_effective_score
@@ -211,7 +214,19 @@ def _vote_field(
     else:
         target_scores = vote_scores
 
-    # --- 3. Tentukan STRING PEMENANG dengan Tie-Breaker Priority ---
+    # --- 3. Minimum Quality Gate ---
+    # Jika max conf semua kandidat < 50.0, tidak ada kandidat yang cukup yakin
+    # Return None agar tidak menghasilkan nilai salah yang terlihat plausible
+    max_any_conf = max(target_scores.values()) if target_scores else 0.0
+    if max_any_conf < 50.0 and not is_mob_strong:
+        return {
+            "value": None,
+            "confidence": 0.0,
+            "source": "none",
+            "validated": False,
+        }
+
+    # --- 4. Tentukan STRING PEMENANG dengan Tie-Breaker Priority ---
     winner_key = max(target_scores, key=target_scores.get)
 
     if is_mob_strong and mob_key in target_scores and winner_key != mob_key:
