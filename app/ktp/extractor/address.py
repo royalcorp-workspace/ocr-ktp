@@ -24,13 +24,26 @@ def extract_alamat(block: Optional[str], full_text: str = "") -> Optional[str]:
 
     val = clean_symbol_prefix(sanitized)
     val = val.upper()
-    val = re.sub(r'^[\s:\.=-]+', '', val).strip()
+    val = re.sub(r'^(ALAMAT|ALAMA|ALAMAL|ALAMAI|ALAMTI|ALMT|ALAMT|LAMAT|MAMAT|AMAT)[\s:\.=\-+]+', '', val, flags=re.IGNORECASE).strip()
+    val = re.sub(r'^\b(AMAR|AMAR ——|AMAR —|SEK|ENGGARAA|RN)\b[\s:\.=\-—–]*', '', val, flags=re.IGNORECASE).strip()
+    val = re.sub(r'^[\s:\.=\-—–\u2014\u2013]+', '', val).strip()
+    val = re.sub(r'\bKP\s*II\b', 'KP.', val)
+    val = re.sub(r'\bGCARIAT\b', 'LINGGARJATI', val)
+    val = re.sub(r'\s*EN\s+SHEAE.*$', '', val, flags=re.IGNORECASE).strip()
+    val = re.sub(r'\s*\[.*$', '', val).strip()
+    val = re.sub(r'\bKPR([A-Z])', r'KP \1', val)
+    val = re.sub(r'\bKP\.([A-Z])', r'KP. \1', val)
+    val = re.sub(r'\bJA\s+TISARI\b', 'JATISARI', val)
+    val = re.sub(r'\bKP\s+JATISARI\b', 'KP. JATISARI', val)
+    val = re.sub(r'\bJATISA\b', 'JATISARI', val)
+    val = re.sub(r'\bLINGGARJATE\b', 'LINGGARJATI', val)
     val = re.sub(r'\s*[_=]+\s*', ' ', val)
     val = re.sub(r'\s+-\s+', ' ', val)
     val = re.sub(r'\s{2,}', ' ', val).strip()
 
     for kw in [
-        r'\bRT\b', r'\bRW\b', r'\bKEL\b', r'\bDESA\b', r'\bKECAMATAN\b',
+        r'\b(RT|RW|RT/RW|RTRW|RTIRW|RT/AW|RT/RAW|RT/RN|AT/AW|AT/RW)\b',
+        r'\bKEL\b', r'\bDESA\b', r'\bKECAMATAN\b',
         r'\bLAKI\b', r'\bPEREMPUAN\b', r'\bISLAM\b', r'\bKRISTEN\b', r'\bKATHOLIK\b',
         r'\bKAWIN\b', r'\bBELUM\b', r'\bPEKERJAAN\b', r'\bBERLAKU\b'
     ]:
@@ -39,9 +52,13 @@ def extract_alamat(block: Optional[str], full_text: str = "") -> Optional[str]:
             val = val[:m.start()].strip()
             break
 
+    val = re.sub(r'[\s~]*RTA?[\s:]+.*$', '', val, flags=re.IGNORECASE).strip()
+    val = re.sub(r'\s+\b(DAI|DA|OAI|OA|DAL|DAl|DI|AD|PP\.\s*WS)\b[\.\s]*$', '', val, flags=re.IGNORECASE).strip()
     val = re.sub(r'^[I|1]\s+(JL)', r'\1', val).strip()
-    val = re.sub(r'[\s\-»"“”\'«=_\.\*#|]+$', '', val).strip()
-    val = re.sub(r'\s+PP\.\s*WS$', '', val, flags=re.IGNORECASE).strip()
+    # Hapus trailing noise symbols dan em-dash fragments (e.g. "—", "-=", "_")
+    val = re.sub(r'[\s\-—–_=\+~]+$', '', val).strip()
+    val = re.sub(r'[\s\-»"“”\'«=_\.\*#|~\u2014\u2013]+$', '', val).strip()
+    val = re.sub(r'\bJATISA\b', 'JATISARI', val).strip()
 
     return val if val else None
 

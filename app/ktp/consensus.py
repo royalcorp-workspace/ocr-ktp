@@ -133,11 +133,21 @@ def _vote_field(
     vote_originals: dict[str, str] = {}
     vote_max_conf: dict[str, float] = {}
 
+    from app.ktp.v1.fallback import _sanity_check_free_text
+
     # --- 1. Kumpulkan Suara Mobile ---
+    mob_key = None
+    mob_conf = 0.0
+    is_mob_strong = False
+
     if mobile_value and mobile_value.strip():
+        is_mob_sane, _ = _sanity_check_free_text(field, mobile_value)
         norm_key = _normalize_for_match(mobile_value, field)
-        if norm_key:
+        if norm_key and is_mob_sane:
+            mob_key = norm_key
             mob_conf = float(mobile_confidence)
+            if mob_conf >= 75.0:
+                is_mob_strong = True
             voter_conf = min(100.0, max(0.0, mob_conf))
             vote_scores[norm_key] += mob_conf
             vote_voter_scores[norm_key].append(voter_conf)
@@ -145,19 +155,22 @@ def _vote_field(
             vote_originals[norm_key] = mobile_value.strip()
             vote_max_conf[norm_key] = mob_conf
 
-    # --- 2. Kumpulkan Suara Tesseract ---
+    # --- 2. Kumpulkan Suara Tesseract dengan Sanity Gate ---
     for entry in tesseract_entries:
         val = entry.get("value")
         conf = float(entry.get("confidence", 0.0))
         cand_name = entry.get("candidate_name", "tesseract")
         if val and val.strip():
+            is_cand_sane, _ = _sanity_check_free_text(field, val)
+            if not is_cand_sane:
+                continue  # SANITY GATE: Skip garbled/noise Tesseract candidates!
+
             norm_key = _normalize_for_match(val, field)
             if norm_key:
                 voter_conf = min(100.0, max(0.0, conf))
                 vote_scores[norm_key] += conf
                 vote_voter_scores[norm_key].append(voter_conf)
                 vote_sources[norm_key].append(f"tesseract:{cand_name}")
-                # Prefer original value dari entry dengan confidence tertinggi
                 if norm_key not in vote_originals or conf > vote_max_conf.get(norm_key, -1.0):
                     vote_originals[norm_key] = val.strip()
                     vote_max_conf[norm_key] = conf
@@ -170,9 +183,49 @@ def _vote_field(
             "validated": False,
         }
 
-    # --- 3. Tentukan STRING PEMENANG (berdasarkan total akumulasi skor tertinggi) ---
-    winner_key = max(vote_scores, key=vote_scores.get)
+    # --- 2.5 Filter Tesseract Candidates against Mobile Priority Bonus & Override Gate ---
+    if is_mob_strong and mob_key in vote_scores:
+        filtered_scores = {}
+        for key in vote_scores:
+            if key == mob_key:
+                filtered_scores[key] = mob_conf
+            else:
+                voters = vote_voter_scores[key]
+                cand_max_conf = vote_max_conf.get(key, 0.0)
+                cand_voter_count = len(voters)
+                cand_avg_conf = (sum(voters) / cand_voter_count) if cand_voter_count > 0 else 0.0
+                cand_effective_score = cand_max_conf if cand_voter_count == 1 else cand_avg_conf
+
+                # Tesseract Override Gate:
+                # 1. Single candidate max conf >= 90.0, OR
+                # 2. Konsensus Mutlak Tesseract: N >= 2 candidates AND average conf >= 85.0
+                is_single_strong = cand_max_conf >= 90.0
+                is_absolute_consensus = (cand_voter_count >= 2 and cand_avg_conf >= 85.0)
+
+                if is_single_strong or is_absolute_consensus:
+                    filtered_scores[key] = cand_effective_score
+                else:
+                    # Cap Tesseract candidate score below mobile_data so garbled accumulation cannot win
+                    filtered_scores[key] = min(cand_effective_score, mob_conf - 5.0)
+        target_scores = filtered_scores
+    else:
+        target_scores = vote_scores
+
+    # --- 3. Tentukan STRING PEMENANG dengan Tie-Breaker Priority ---
+    winner_key = max(target_scores, key=target_scores.get)
+
+    if is_mob_strong and mob_key in target_scores and winner_key != mob_key:
+        score_diff = target_scores[winner_key] - target_scores[mob_key]
+        if score_diff <= 2.0:
+            winner_key = mob_key  # TIE-BREAKER: mobile_data wins ties or <= 2.0 diff!
+
     winning_value = vote_originals[winner_key]
+    if field == "alamat" and winning_value:
+        from app.ktp.extractor.address import extract_alamat
+        cleaned_addr = extract_alamat(winning_value)
+        if cleaned_addr:
+            winning_value = cleaned_addr
+
     winner_sources = vote_sources[winner_key]
     skor_pemilih_pemenang = vote_voter_scores[winner_key]
 
@@ -206,6 +259,7 @@ def _vote_field(
         "source": source_label,
         "validated": validated,
         "voter_count": voter_count,
+        "raw_sources": winner_sources,
     }
 
 

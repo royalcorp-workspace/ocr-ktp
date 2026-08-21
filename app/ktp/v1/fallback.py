@@ -85,10 +85,13 @@ def _sanity_check_free_text(field_name: str, text: str) -> tuple[bool, str]:
             if re.search(r'\b' + re.escape(label) + r'\b', text_upper):
                 return False, f"contains leaked label '{label}'"
                 
-    # 4. Symbol Ratio (including Unicode noise symbols)
+    # 4. Symbol Ratio (excluding structural '-' and '/' for date and rt_rw fields)
     import string
     noise_chars = set(string.punctuation + "\u2014\u2013_|=+\u201c\u201d\u2014\u00ab\u00bb\u00b0\u00a9$")
-    symbols = sum(1 for c in text if c in noise_chars)
+    if field_name in ["tanggal_lahir", "berlaku_hingga", "rt_rw", "nik"]:
+        symbols = sum(1 for c in text if c in noise_chars and c not in ['-', '/'])
+    else:
+        symbols = sum(1 for c in text if c in noise_chars)
     if len(text) > 0 and (symbols / len(text)) > 0.15:
         return False, "high symbol ratio"
         
@@ -121,22 +124,22 @@ def _sanity_check_free_text(field_name: str, text: str) -> tuple[bool, str]:
             if not assess_name_quality(text):
                 return False, "nama failed assess_name_quality"
 
-        # Check single-char garbage words (e.g., "B", "J", "W")
-        single_char_words = sum(1 for w in words if len(w) <= 1)
-        if len(words) >= 2 and single_char_words / len(words) >= 0.33:
-            return False, f"too many single-char garbage words ({single_char_words}/{len(words)})"
-        
-        # Check short garbage words (≤2 chars)
-        if len(words) >= 3:
-            short_garbage = sum(1 for w in words if len(w) <= 2)
-            if short_garbage / len(words) > 0.40:
-                return False, f"too many short garbage words ({short_garbage}/{len(words)})"
-        
-        # Average word length check - legitimate names/places have avg ≥ 3 chars
-        if len(words) >= 2:
-            avg_word_len = sum(len(w) for w in words) / len(words)
-            if avg_word_len < 3.0:
-                return False, f"average word length too short ({avg_word_len:.1f})"
+        # Check single-char garbage words & short garbage words for nama, kelurahan_desa, kecamatan
+        # (Addresses are excluded because they legitimately contain 'NO', 'RT', 'RW', block letters like 'E', '4')
+        if field_name in ["nama", "kelurahan_desa", "kecamatan"]:
+            single_char_words = sum(1 for w in words if len(w) <= 1)
+            if len(words) >= 2 and single_char_words / len(words) >= 0.33:
+                return False, f"too many single-char garbage words ({single_char_words}/{len(words)})"
+            
+            if len(words) >= 3:
+                short_garbage = sum(1 for w in words if len(w) <= 2)
+                if short_garbage / len(words) > 0.40:
+                    return False, f"too many short garbage words ({short_garbage}/{len(words)})"
+            
+            if len(words) >= 2:
+                avg_word_len = sum(len(w) for w in words) / len(words)
+                if avg_word_len < 3.0:
+                    return False, f"average word length too short ({avg_word_len:.1f})"
         
         # Check for Pekerjaan keywords leaking into Kecamatan
         if field_name == "kecamatan" and any(k in text_upper for k in ["SWASTA", "BURUH", "PNS", "KARYAWAN", "WIRASWASTA", "PETANI", "PELAJAR"]):
