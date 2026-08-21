@@ -163,10 +163,12 @@ def extract_kewarganegaraan(block: Optional[str], full_text: str = "") -> Option
 
 
 def extract_berlaku_hingga(block: Optional[str], full_text: str = "") -> Optional[str]:
-    text_to_check = None
-    if block and block.strip():
-        text_to_check = block
-    elif full_text and full_text.strip():
+    full_str = (full_text or "").upper()
+    if "SEUMUR" in full_str or "HIDUP" in full_str:
+        return "SEUMUR HIDUP"
+
+    text_to_check = block if (block and block.strip()) else ""
+    if not text_to_check and full_text:
         for line in full_text.splitlines():
             if any(k in line.upper() for k in ["BERLAKU", "HINGGA", "SEUMUR"]):
                 text_to_check = line
@@ -176,7 +178,6 @@ def extract_berlaku_hingga(block: Optional[str], full_text: str = "") -> Optiona
         return None
 
     date_pattern = r'(\b[0-9OolI|!]{1,2})\s*[./-]\s*([0-9OolI|!]{1,2})\s*[./-]\s*([0-9OolI|!]{4})\b'
-
     text_upper = text_to_check.upper()
     if "SEUMUR" in text_upper or "HIDUP" in text_upper:
         return "SEUMUR HIDUP"
@@ -189,7 +190,7 @@ def extract_berlaku_hingga(block: Optional[str], full_text: str = "") -> Optiona
         y_corr = "".join(DIGIT_MAP.get(c, c) for c in y_raw)
         if d_corr.isdigit() and m_corr.isdigit() and y_corr.isdigit():
             d_int, m_int, y_int = int(d_corr), int(m_corr), int(y_corr)
-            if 1 <= d_int <= 31 and 1 <= m_int <= 12 and 1900 <= y_int <= 2099:
+            if 1 <= d_int <= 31 and 1 <= m_int <= 12 and 2010 <= y_int <= 2099:
                 try:
                     datetime.date(y_int, m_int, d_int)
                     return f"{d_corr}-{m_corr}-{y_corr}"

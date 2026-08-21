@@ -146,7 +146,7 @@ def _vote_field(
         if norm_key and is_mob_sane:
             mob_key = norm_key
             mob_conf = float(mobile_confidence)
-            if mob_conf >= 75.0:
+            if mob_conf >= 75.0 and mobile_value.strip() != "-":
                 is_mob_strong = True
             voter_conf = min(100.0, max(0.0, mob_conf))
             vote_scores[norm_key] += mob_conf

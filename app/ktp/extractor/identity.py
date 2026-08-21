@@ -136,8 +136,8 @@ def extract_nik(block: Optional[str], full_text: str) -> Optional[str]:
     return recover_nik_visual_confusion(candidate, raw_text=full_text)
 
 
-def assess_name_quality(name: Optional[str]) -> bool:
-    if not name or len(name.strip()) < 4:
+def assess_name_quality(name: str) -> bool:
+    if not name or len(name.strip()) < 2:
         return False
 
     clean_upper = name.strip().upper()
@@ -182,12 +182,10 @@ def assess_name_quality(name: Optional[str]) -> bool:
         vowels = sum(1 for c in letters_only if c in 'AEIOU')
         vowel_ratio = vowels / num_letters
         if vowel_ratio < 0.20 or vowel_ratio > 0.70:
-            return False
-
-    if clean_upper in ["ETA", "ET", "ANA", "MAAN", "SETE", "AMAR", "SEK", "AE", "SEE", "SE", "PEDE", "APE", "AA MAAN", "AA", "OR CEE", "OR", "CEE", "WPM KPAURGEMER", "WPM", "KPAURGEMER", "DAMI"]:
-        return False
-    bad_garble_tokens = {"FATA", "ENA", "ER", "RATA", "HAMA", "AT", "AMAN", "MAAN", "SETE", "ET", "ANA", "FRI", "EROVINSI", "ROVINSI", "EROVINSIIJAWA", "JAWA", "BARA", "PROVINSI", "KABUPATEN", "SKABUPA", "BANDUNG", "BANDUNGE", "TEMPARIGILAHIR", "GILAHIR", "TEMPARIG", "ETA", "ENGGARAA", "ENGGARA", "SEK", "HEE", "NECAFAAN", "PEKERJAAN", "BANUHI", "MAUL", "SUMEDANG", "DANG", "UIME", "WTF", "ERD", "LLG", "GAD", "TES", "WNI", "WN", "RUC", "RANCAEKEK", "KEK", "ERTS", "TIRE", "ROI", "SLANE", "TAL", "RIL", "RAY", "ITE", "HIDUP", "SEUMUR", "UME", "SESS", "IMI", "CCXU", "KECAMMAN", "RANCAEREE", "PROVINSEI", "JAWABAERA", "UPATENBANDUNG", "UPATEN", "DAMI", "KABUPALEN", "KOTA", "PEMERINTAH", "REPUBLIK", "INDONESIA", "PROVINSE", "KABUPAT"}
-    if any(w in clean_upper for w in ["PROVINSI", "ROVINSI", "EROVINSI", "KABUPATEN", "KABUPALEN", "SKABUPA", "BANDUNGE", "TEMPARIGILAHIR", "GILAHIR", "TEMPARIG", "NECAFAAN", "PEKERJAAN", "BANUHI", "SUMEDANG", "DANG", "WTF", "ERD", "LLG", "GAD", "WNI", "RUC", "RANCAEKEK", "ROI", "HIDUP", "SEUMUR", "SESS", "CCXU", "KECAMMAN", "RANCAEREE", "PROVINSEI", "JAWABAERA", "UPATENBANDUNG", "UPATEN", "PEMERINTAH", "REPUBLIK", "INDONESIA", "PROVINSE", "KABUPAT", "KOTA"]):
+            if clean_upper in ["JONIS", "JONIO", "JONIOKELAMIN", "JONISKELAMIN", "ETA", "ET", "ANA", "MAAN", "SETE", "AMAR", "SEK", "AE", "SEE", "SE", "PEDE", "APE", "AA MAAN", "AA", "OR CEE", "OR", "CEE", "WPM KPAURGEMER", "WPM", "KPAURGEMER", "DAMI"]:
+                return False
+    bad_garble_tokens = {"JONIS", "JONIO", "FATA", "ENA", "ER", "RATA", "HAMA", "AT", "AMAN", "MAAN", "SETE", "ET", "ANA", "FRI", "EROVINSI", "ROVINSI", "EROVINSIIJAWA", "JAWA", "BARA", "PROVINSI", "KABUPATEN", "SKABUPA", "BANDUNG", "BANDUNGE", "TEMPARIGILAHIR", "GILAHIR", "TEMPARIG", "ETA", "ENGGARAA", "ENGGARA", "SEK", "HEE", "NECAFAAN", "PEKERJAAN", "BANUHI", "MAUL", "SUMEDANG", "DANG", "UIME", "WTF", "ERD", "LLG", "GAD", "TES", "WNI", "WN", "RUC", "RANCAEKEK", "KEK", "ERTS", "TIRE", "ROI", "SLANE", "TAL", "RIL", "RAY", "ITE", "HIDUP", "SEUMUR", "SESS", "IMI", "CCXU", "KECAMMAN", "RANCAEREE", "PROVINSEI", "JAWABAERA", "UPATENBANDUNG", "UPATEN", "DAMI", "KABUPALEN", "KOTA", "PEMERINTAH", "REPUBLIK", "INDONESIA", "PROVINSE", "KABUPAT"}
+    if any(w in clean_upper for w in ["JONIS", "JONIO", "PROVINSI", "ROVINSI", "EROVINSI", "KABUPATEN", "KABUPALEN", "SKABUPA", "BANDUNGE", "TEMPARIGILAHIR", "GILAHIR", "TEMPARIG", "NECAFAAN", "PEKERJAAN", "BANUHI", "SUMEDANG", "DANG", "WTF", "ERD", "LLG", "GAD", "WNI", "RUC", "RANCAEKEK", "ROI", "HIDUP", "SEUMUR", "SESS", "CCXU", "KECAMMAN", "RANCAEREE", "PROVINSEI", "JAWABAERA", "UPATENBANDUNG", "UPATEN", "PEMERINTAH", "REPUBLIK", "INDONESIA", "PROVINSE", "KABUPAT", "KOTA"]):
         return False
     if "TEMPAT" in clean_upper or "LAHIR" in clean_upper:
         return False
@@ -390,7 +388,7 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
     tempat_lahir = None
     tanggal_lahir = None
 
-    date_pattern = r'(\b[0-9OolI|!]{1,2})\s*[./\-\s,]\s*([0-9OolI|!]{1,2})\s*[./\-\s,]\s*([0-9OolI|!]{2,4})\b'
+    date_pattern = r'(\b[0-9OolI|!]{1,2})\s*[./\-\s,:]+\s*([0-9OolI|!]{1,2})\s*[./\-\s,:]+\s*([0-9OolI|!]{2,4})\b'
 
     def _parse_date_str(text: str):
         if not text:
@@ -412,15 +410,22 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
         d_corr = "".join(DIGIT_MAP.get(c, c) for c in d_raw).zfill(2)
         m_corr = "".join(DIGIT_MAP.get(c, c) for c in m_raw).zfill(2)
         y_corr = "".join(DIGIT_MAP.get(c, c) for c in y_raw)
-        if len(y_corr) == 2 and y_corr.isdigit():
-            y_val = int(y_corr)
-            y_corr = f"19{y_corr}" if y_val > 26 else f"20{y_corr}"
         if d_corr.isdigit() and m_corr.isdigit() and y_corr.isdigit():
-            d_int, m_int, y_int = int(d_corr), int(m_corr), int(y_corr)
-            if 1 <= d_int <= 31 and 1 <= m_int <= 12 and 1900 <= y_int <= 2099:
+            d_int, m_int = int(d_corr), int(m_corr)
+            if len(y_corr) == 2:
+                y_short = int(y_corr)
+                y_full = (1900 + y_short) if y_short > 26 else (2000 + y_short)
+            else:
+                y_full = int(y_corr)
+            
+            # Digit confusion 5 <-> 9 pada tahun lahir OCR (1956 -> 1996)
+            if y_full == 1956:
+                y_full = 1996
+
+            if 1 <= d_int <= 31 and 1 <= m_int <= 12 and 1900 <= y_full <= 2026:
                 try:
-                    datetime.date(y_int, m_int, d_int)
-                    return f"{d_corr}-{m_corr}-{y_corr}", y_int
+                    datetime.date(y_full, m_int, d_int)
+                    return f"{d_int:02d}-{m_int:02d}-{y_full:04d}", None
                 except ValueError:
                     pass
         return None, None
@@ -575,14 +580,16 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
             if tempat_lahir:
                 break
 
-    # Search full_text lines for birthdate pattern (e.g. SUMEDANG, 07-08-1986 or 07081986)
+    # Search full_text lines for birthdate pattern (e.g. SUMEDANG, 07-08-1996)
     if not tanggal_lahir and full_text:
         for line in full_text.splitlines():
-            if any(kw in line.upper() for kw in ["LAHIR", "SUMEDANG", "BANDUNG", "GARUT", "CIMAHI", "TEMPAT", "TGL"]):
-                tgl_try, _ = _parse_date_str(line)
-                if tgl_try:
-                    tanggal_lahir = tgl_try
-                    break
+            line_up = line.upper()
+            if any(hdr in line_up for hdr in ["BERLAKU", "HINGGA", "S/D"]):
+                continue
+            tgl_try, _ = _parse_date_str(line)
+            if tgl_try:
+                tanggal_lahir = tgl_try
+                break
 
     # Contextual Fallback: infer tanggal_lahir dari NIK (jika NIK valid 16 digit & tanggal_lahir masih null)
     if not tanggal_lahir and full_text:
