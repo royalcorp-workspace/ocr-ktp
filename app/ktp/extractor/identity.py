@@ -152,11 +152,11 @@ def assess_name_quality(name: str) -> bool:
         return False
 
     # Reject if any token contains KTP field labels as substring (OCR concatenation noise)
-    # e.g. "JONIOKELAMIN" contains "KELAMIN", "LAKILAKI" contains "LAKI"
+    # e.g. "JONIOKELAMIN" contains "KELAMIN", "KELDESABOJONGSALAM" contains "KELDESA"
     embedded_labels = [
         "KELAMIN", "LAKILAKI", "PEREMPUAN", "ALAMAT", "KECAMATAN",
-        "KELURAHAN", "PEKERJAAN", "KEWARGANEGARAAN", "PERKAWINAN",
-        "BERLAKU", "SEUMUR", "HINGGA", "TEMPAIT", "TEMPAT"
+        "KELURAHAN", "KELDESA", "DESA", "PEKERJAAN", "KEWARGANEGARAAN", "PERKAWINAN",
+        "BERLAKU", "SEUMUR", "HINGGA", "TEMPAIT", "TEMPAT", "TEMPAL", "TEMPALITGL", "TEMPAITGL"
     ]
     for token in tokens:
         for label in embedded_labels:

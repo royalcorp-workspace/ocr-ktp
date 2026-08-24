@@ -57,12 +57,13 @@ def _sanity_check_free_text(field_name: str, text: str) -> tuple[bool, str]:
     if re.search(r'[-=_\u2014\u2013.]{2,}', text):
         return False, "contains repetitive noise symbols"
 
-    # 3. Label Leakage Detection (ROI membaca field tetangga)
+    # 3. Comprehensive Label Leakage Detection (mencegah teks field tetangga masuk ke candidate)
     leak_labels = [
         "NIK", "NAMA", "LAHIR", "KELAMIN", "DARAH", "ALAMAT",
         "KECAMATAN", "AGAMA", "PERKAWINAN", "PEKERJAAN", 
         "KEWARGANEGARAAN", "BERLAKU", "HINGGA", "SEUMUR", "HIDUP",
-        "HARIAN", "PROVINSI", "KABUPATEN", "ALAMA"
+        "HARIAN", "PROVINSI", "KABUPATEN", "ALAMA", "KELDESA", "KELURAHAN",
+        "DESA", "TEMPAT", "TEMPAL", "TEMPAIT", "TEMPALITGL", "TEMPAITGL", "TTL"
     ]
     # Setiap field boleh mengandung label dirinya sendiri
     exclude = []
@@ -73,8 +74,8 @@ def _sanity_check_free_text(field_name: str, text: str) -> tuple[bool, str]:
     elif field_name == "berlaku_hingga": exclude = ["BERLAKU", "HINGGA", "SEUMUR", "HIDUP"]
     elif field_name == "golongan_darah": exclude = ["DARAH"]
     elif field_name == "jenis_kelamin": exclude = ["KELAMIN"]
-    elif field_name == "tempat_lahir": exclude = ["LAHIR"]
-    elif field_name == "kelurahan_desa": exclude = []
+    elif field_name == "tempat_lahir": exclude = ["LAHIR", "TEMPAT", "TEMPAL", "TEMPAIT", "TTL"]
+    elif field_name == "kelurahan_desa": exclude = ["KELDESA", "KELURAHAN", "DESA"]
     elif field_name == "kecamatan": exclude = ["KECAMATAN"]
     elif field_name == "nama": exclude = ["NAMA"]
     elif field_name == "nik": exclude = ["NIK"]
@@ -82,7 +83,7 @@ def _sanity_check_free_text(field_name: str, text: str) -> tuple[bool, str]:
     
     for label in leak_labels:
         if label not in exclude:
-            if re.search(r'\b' + re.escape(label) + r'\b', text_upper):
+            if re.search(r'\b' + re.escape(label) + r'\b', text_upper) or (len(label) >= 4 and label in text_upper):
                 return False, f"contains leaked label '{label}'"
                 
     # 4. Symbol Ratio (excluding structural '-' and '/' for date and rt_rw fields)

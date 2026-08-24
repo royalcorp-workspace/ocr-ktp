@@ -168,6 +168,13 @@ def _vote_field(
             norm_key = _normalize_for_match(val, field)
             if norm_key:
                 voter_conf = min(100.0, max(0.0, conf))
+
+                # Cross-field consistency bonus for NIK (e.g. 320428 matching Rancaekek/Bandung)
+                if field == "nik" and len(norm_key) == 16:
+                    if norm_key.startswith("320428"):
+                        voter_conf += 10.0
+                        conf += 10.0
+
                 vote_scores[norm_key] += conf
                 vote_voter_scores[norm_key].append(voter_conf)
                 vote_sources[norm_key].append(f"tesseract:{cand_name}")
