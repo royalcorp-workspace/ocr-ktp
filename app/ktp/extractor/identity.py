@@ -211,7 +211,8 @@ def truncate_at_stop_fragments(text: str) -> str:
 def clean_nama_prefix(text: str) -> str:
     if not text:
         return text
-    text = re.sub(r'^\s*(?:NAMA|NAME|AMA|N4MA|NAM4|NlMA)\b[\s:\.=-]*', '', text, flags=re.IGNORECASE).strip()
+    text = re.sub(r'^\s*(?:NAMA|NAME|KAMA|AMA|IKAMA|N4MA|NAM4|NlMA)\b[\s:\.=-]*', '', text, flags=re.IGNORECASE).strip()
+    text = re.sub(r'^[A-Z0-9]{1,2}[\s:\._\-]+', '', text).strip()
     text = re.sub(r'^[^A-Z]+', '', text).strip()
     tokens = text.split()
     if len(tokens) > 1 and len(tokens[0]) == 1:

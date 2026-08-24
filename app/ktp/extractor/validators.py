@@ -111,6 +111,69 @@ def validate_nik_structure(nik: str, raw_text: str = "") -> bool:
         return False
 
 
+def score_nik_candidate(nik: str) -> float:
+    """
+    Hitung skor validasi internal NIK berbasis UU Adminduk / Permendagri.
+    SKOR MAKSIMAL: 100.0.
+    1. 16-Digit Purity (+30)
+    2. Kode Wilayah Valid PPKKCC (+20)
+    3. Tanggal Lahir (Pria 01-31, Wanita 41-71) (+15)
+    4. Bulan Lahir (01-12) (+15)
+    5. Validitas Kalender datetime.date (+10)
+    6. Nomor Urut NNNN != 0000 (+10)
+    """
+    if not nik or not str(nik).isdigit():
+        return 0.0
+
+    s = str(nik).strip()
+    if len(s) != 16:
+        return 10.0 if len(s) in [15, 17] else 0.0
+
+    score = 30.0  # 16-digit numeric base score
+
+    try:
+        prov = int(s[0:2])
+        kab = int(s[2:4])
+        kec = int(s[4:6])
+        dd = int(s[6:8])
+        mm = int(s[8:10])
+        yy = int(s[10:12])
+        seq = int(s[12:16])
+
+        # Kode Wilayah (PPKKCC)
+        if (11 <= prov <= 92) and (1 <= kab <= 78) and (1 <= kec <= 75):
+            score += 20.0
+
+        # Tanggal Lahir (Pria 01-31, Wanita 41-71)
+        real_dd = dd - 40 if dd > 40 else dd
+        if (1 <= dd <= 31) or (41 <= dd <= 71):
+            score += 15.0
+
+        # Bulan Lahir (01-12)
+        if 1 <= mm <= 12:
+            score += 15.0
+
+        # Validitas Kalender Legal (datetime.date)
+        import datetime
+        yyyy = yy + 1900 if yy > 26 else yy + 2000
+        try:
+            datetime.date(yyyy, mm, real_dd)
+            score += 10.0
+        except ValueError:
+            score -= 20.0
+
+        # Nomor Urut NNNN != 0000
+        if 1 <= seq <= 9999:
+            score += 10.0
+        else:
+            score -= 20.0
+
+    except ValueError:
+        return 0.0
+
+    return max(0.0, min(100.0, score))
+
+
 def sync_nik_with_birthdate(
     nik: Optional[str],
     tanggal_lahir_str: Optional[str],

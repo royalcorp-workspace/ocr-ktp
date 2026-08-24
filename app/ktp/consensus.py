@@ -153,7 +153,10 @@ def _vote_field(
             if mob_conf >= 75.0:
                 is_mob_strong = True
             voter_conf = min(100.0, max(0.0, mob_conf))
-            vote_scores[norm_key] += mob_conf
+            # +20% Extra Multiplier for mobile_data; 3x boost for free text address/name to outvote cropped ROI fragments
+            multiplier = 3.0 if field in ["alamat", "nama", "nik"] else 1.20
+            mob_score = mob_conf * multiplier
+            vote_scores[norm_key] += mob_score
             vote_voter_scores[norm_key].append(voter_conf)
             vote_sources[norm_key].append("mobile")
             vote_originals[norm_key] = mobile_value.strip()
@@ -172,15 +175,11 @@ def _vote_field(
             norm_key = _normalize_for_match(val, field)
             if norm_key:
                 voter_conf = min(100.0, max(0.0, conf))
+                cand_weight = 1.5 if ("tier1" in cand_name or "psm6" in cand_name or "best" in cand_name) else 1.0
+                if field == "nama" and " " in norm_key and len(norm_key.split()) >= 2:
+                    cand_weight *= 1.5
 
-                # General Regional & Format Consistency Bonus for NIK (Provinsi 11-92):
-                if field == "nik" and len(norm_key) == 16 and norm_key.isdigit():
-                    from app.ktp.extractor.validators import PROVINCE_CODES
-                    if any(p_code == norm_key[:2] for p_code in PROVINCE_CODES.values()):
-                        voter_conf += 10.0
-                        conf += 10.0
-
-                vote_scores[norm_key] += conf
+                vote_scores[norm_key] += conf * cand_weight
                 vote_voter_scores[norm_key].append(voter_conf)
                 vote_sources[norm_key].append(f"tesseract:{cand_name}")
                 if norm_key not in vote_originals or conf > vote_max_conf.get(norm_key, -1.0):
