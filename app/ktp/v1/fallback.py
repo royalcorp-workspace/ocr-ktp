@@ -81,27 +81,32 @@ def _sanity_check_free_text(field_name: str, text: str) -> tuple[bool, str]:
     elif field_name == "kecamatan": exclude = ["KECAMATAN"]
     elif field_name == "nama": exclude = ["NAMA"]
     elif field_name == "nik": exclude = ["NIK"]
-    elif field_name == "alamat": exclude = ["ALAMAT", "ALAMA"]
+    elif field_name == "alamat": exclude = ["ALAMAT", "ALAMA", "RT", "RW", "RT/RW", "RTRW", "RTIRW", "RT/AW", "RT/RAW", "RT/RN", "AT/AW", "AT/RW", "ATRW"]
     
     for label in leak_labels:
         if label not in exclude:
             if re.search(r'\b' + re.escape(label) + r'\b', text_upper) or (len(label) >= 4 and label in text_upper):
                 return False, f"contains leaked label '{label}'"
                 
-    # 4. Symbol Ratio (excluding structural '-' and '/' for date and rt_rw fields)
+    # 4. Symbol Ratio (excluding structural symbols for date, rt_rw, nik, and alamat)
     import string
     noise_chars = set(string.punctuation + "\u2014\u2013_|=+\u201c\u201d\u2014\u00ab\u00bb\u00b0\u00a9$")
     if field_name in ["tanggal_lahir", "berlaku_hingga", "rt_rw", "nik"]:
         symbols = sum(1 for c in text if c in noise_chars and c not in ['-', '/'])
+    elif field_name == "alamat":
+        symbols = sum(1 for c in text if c in noise_chars and c not in [':', '/', '.', '-'])
     else:
         symbols = sum(1 for c in text if c in noise_chars)
     if len(text) > 0 and (symbols / len(text)) > 0.15:
         return False, "high symbol ratio"
         
-    # 5. Alphanumeric Density (excluding spaces)
+    # 5. Alphanumeric Density (excluding spaces and structural symbols for alamat)
     non_space = re.sub(r'\s+', '', text)
     if len(non_space) > 0:
-        alnum_count = sum(1 for c in non_space if c.isalnum())
+        if field_name == "alamat":
+            alnum_count = sum(1 for c in non_space if c.isalnum() or c in [':', '/', '.', '-'])
+        else:
+            alnum_count = sum(1 for c in non_space if c.isalnum())
         if (alnum_count / len(non_space)) < 0.70:
             return False, "low alphanumeric density"
 
@@ -523,8 +528,6 @@ def merge_roi_and_fallback_validate(
             merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source="GENERAL")
 
     # 3. Generic NIK-DOB Synchronization
-    if merged.get("tanggal_lahir") and merged["tanggal_lahir"].value == "14-08-1970":
-        merged["tanggal_lahir"] = FieldWithSource(value="07-08-1996", confidence=90.0, source="CONSENSUS")
 
     merged_nik = merged.get("nik").value if merged.get("nik") else None
     merged_tgl = merged.get("tanggal_lahir").value if merged.get("tanggal_lahir") else None
@@ -534,5 +537,13 @@ def merge_roi_and_fallback_validate(
         if synced_nik and synced_nik != merged_nik:
             old_src = merged["nik"].source
             merged["nik"] = FieldWithSource(value=synced_nik, confidence=99.0, source=old_src)
+    # 4. Regional Hierarchy Fallback for kecamatan if null or garbled
+    merged_kec = merged.get("kecamatan").value if merged.get("kecamatan") else None
+    merged_kel = merged.get("kelurahan_desa").value if merged.get("kelurahan_desa") else None
+    if (not merged_kec or len(merged_kec.strip()) < 3) and merged_kel:
+        from app.ktp.v1.regional_normalizer import lookup_regional_hierarchy
+        inferred = lookup_regional_hierarchy(kelurahan_desa=merged_kel)
+        if inferred and inferred.get("kecamatan"):
+            merged["kecamatan"] = FieldWithSource(value=inferred["kecamatan"], confidence=88.0, source="CONSENSUS")
 
     return merged
