@@ -16,6 +16,8 @@ from app.ktp.schemas import (
     QualityMetrics,
 )
 
+from app.utils.file_validator import validate_image_bytes
+
 router = APIRouter(prefix="/ktp", tags=["ktp"])
 
 
@@ -28,10 +30,10 @@ def _make_field_response(
     best_score: int,
     best_word_conf_map: dict | None,
     raw_text: str | None,
-    all_fields: dict | None,
-    min_confidence_threshold: float = 35.0
+    all_fields: dict | None = None,
+    min_confidence_threshold: float = 30.0,
 ) -> FieldWithConfidence:
-    if not val or not str(val).strip():
+    if not val:
         return FieldWithConfidence(value=None, confidence=0.0)
     conf = calculate_field_confidence(
         field_name, val, best_score, best_word_conf_map, raw_text=raw_text, all_fields=all_fields
@@ -46,20 +48,11 @@ def _make_field_response(
 async def extract_ktp(request: Request, file: UploadFile = File(...)):
     """
     Endpoint untuk mengekstrak informasi terstruktur dari Kartu Tanda Penduduk (KTP-el) Indonesia (OCR).
-    Menerima file gambar (JPEG, PNG, WebP) dan mengembalikan 4 field utama beserta confidence score.
+    Menerima file gambar (JPEG, PNG, WebP, BMP) dan mengembalikan 4 field utama beserta confidence score.
     """
     req_id = request_id_var.get()
     start_time = time.perf_counter()
     logger.info(f"KTP OCR request diterima - request_id={req_id} filename={file.filename} content_type={file.content_type}")
-
-    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
-    ext = file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else ""
-    if file.content_type not in allowed_types and ext not in ["jpg", "jpeg", "png", "webp"]:
-        logger.warning(f"KTP OCR gagal validasi - request_id={req_id} filename={file.filename} reason=unsupported_media_type content_type={file.content_type}")
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Tipe file tidak didukung. Harap unggah gambar JPEG, PNG, atau WebP."
-        )
 
     try:
         content = await file.read()
@@ -70,13 +63,8 @@ async def extract_ktp(request: Request, file: UploadFile = File(...)):
             detail="Gagal membaca bytes dari file yang diunggah."
         )
 
-    max_file_size = 10 * 1024 * 1024  # 10 MB
-    if len(content) > max_file_size:
-        logger.warning(f"KTP OCR gagal validasi - request_id={req_id} filename={file.filename} reason=file_too_large size_bytes={len(content)}")
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Payload Too Large. Ukuran file terlalu besar, maksimal 10 MB."
-        )
+    # Validasi binary image (Magic Bytes & Decoding)
+    validate_image_bytes(content)
 
     logger.info(f"KTP OCR validation berhasil - request_id={req_id} filename={file.filename}")
     logger.info(f"KTP OCR processing dimulai - request_id={req_id}")
@@ -151,11 +139,38 @@ async def validate_ktp(
     start_time = time.perf_counter()
     logger.info(f"KTP VALIDATE (Consensus) request diterima - request_id={req_id} filename={file.filename}")
 
-    # --- 1. Parse mobile_data JSON ---
+    # --- 1. Parse & Normalize mobile_data JSON ---
     try:
-        mobile_dict = json.loads(mobile_data)
-        mobile_input = MobileOCRInput(**mobile_dict)
-    except (json.JSONDecodeError, Exception) as e:
+        from app.ktp.normalizer import GlobalPayloadNormalizer
+        norm_flat = GlobalPayloadNormalizer.normalize(mobile_data)
+        
+        raw_dict = {}
+        if isinstance(mobile_data, str):
+            try:
+                raw_dict = json.loads(mobile_data)
+            except Exception:
+                pass
+        elif isinstance(mobile_data, dict):
+            raw_dict = mobile_data
+
+        mobile_input_dict = {}
+        for f in ["nik", "nama", "tempat_lahir", "tanggal_lahir"]:
+            val = norm_flat.get(f)
+            conf = 0.0
+            if isinstance(raw_dict, dict):
+                field_raw = raw_dict.get(f)
+                if isinstance(field_raw, dict) and "confidence" in field_raw:
+                    try:
+                        conf = float(field_raw["confidence"])
+                    except (ValueError, TypeError):
+                        pass
+            if val is not None:
+                mobile_input_dict[f] = {"value": val, "confidence": conf}
+            else:
+                mobile_input_dict[f] = None
+                
+        mobile_input = MobileOCRInput(**mobile_input_dict)
+    except Exception as e:
         logger.warning(f"KTP VALIDATE gagal parse mobile_data - request_id={req_id} error={str(e)}")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -163,14 +178,6 @@ async def validate_ktp(
         )
 
     # --- 2. Validasi file gambar ---
-    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
-    ext = file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else ""
-    if file.content_type not in allowed_types and ext not in ["jpg", "jpeg", "png", "webp"]:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Tipe file tidak didukung. Harap unggah gambar JPEG, PNG, atau WebP."
-        )
-
     try:
         content = await file.read()
     except Exception as e:
@@ -179,12 +186,8 @@ async def validate_ktp(
             detail="Gagal membaca bytes dari file yang diunggah."
         )
 
-    max_file_size = 10 * 1024 * 1024  # 10 MB
-    if len(content) > max_file_size:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Payload Too Large. Ukuran file terlalu besar, maksimal 10 MB."
-        )
+    # Validasi binary image (Magic Bytes & Decoding)
+    validate_image_bytes(content)
 
     # --- 3. Jalankan Consensus OCR Pipeline ---
     logger.info(f"KTP VALIDATE (Consensus) processing dimulai - request_id={req_id}")

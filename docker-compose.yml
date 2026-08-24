@@ -2,12 +2,14 @@ services:
   ocr-ktp:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
     container_name: ocr-ktp
     ports:
-      - "${PORT:-8011}:${PORT:-8011}"
+      - "127.0.0.1:${PORT:-8011}:${PORT:-8011}"
     volumes:
       - ./logs:/app/logs
+      - ./app:/app/app
+      - ./main.py:/app/main.py
     env_file:
       - .env
     environment:
