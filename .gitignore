@@ -27,21 +27,31 @@ logs/
 .env.local
 .env.*.local
 
-# Testing & Coverage
+# Testing, Benchmarks & Test Data (PII / Sample Images / Benchmark Scripts)
+test/
+roi_investigation/
 .pytest_cache/
 .coverage
 htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Test Data & Sample Images (PII / Large files)
-test/ocr_ktp/
+# Compressed Archives & Update Packages
+ocr-ktp-update.tar.gz
+*.tar.gz
+*.tar
+*.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+
+# Image & Binary Files
 *.png
 *.jpg
 *.jpeg
 *.webp
-*.zip
-*.tar.gz
+*.bmp
 
 # Scratch & Temporary Files
 scratch/
@@ -50,3 +60,7 @@ scratch/
 Thumbs.db
 Desktop.ini
 
+# Agent Config & Rules
+.agent/
+.agents/
+.gemini/

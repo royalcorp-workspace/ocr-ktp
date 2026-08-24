@@ -16,6 +16,8 @@ class KTPData(BaseModel):
     agama: Optional[str] = None
     status_perkawinan: Optional[str] = None
     pekerjaan: Optional[str] = None
+    kewarganegaraan: Optional[str] = None
+    berlaku_hingga: Optional[str] = None
 class FieldWithConfidence(BaseModel):
     value: Optional[str] = None
     confidence: float = 0.0

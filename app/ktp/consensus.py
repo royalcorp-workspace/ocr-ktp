@@ -28,10 +28,14 @@ from app.core.logging_config import ktp_logger as logger
 # Field yang diikutsertakan dalam weighted voting.
 # Tambahkan field baru cukup di sini + update MobileOCRInput schema.
 # ============================================================
-CONSENSUS_FIELDS = ["nik", "nama", "tempat_lahir", "tanggal_lahir"]
+CONSENSUS_FIELDS = [
+    "nik", "nama", "tempat_lahir", "tanggal_lahir", "golongan_darah",
+    "kelurahan_desa", "kecamatan", "agama", "status_perkawinan",
+    "pekerjaan", "kewarganegaraan", "berlaku_hingga"
+]
 
 # Field yang perlu pencocokan case-insensitive & normalisasi whitespace
-CASE_INSENSITIVE_FIELDS = {"nama", "tempat_lahir"}
+CASE_INSENSITIVE_FIELDS = {"nama", "tempat_lahir", "kelurahan_desa", "kecamatan", "pekerjaan", "golongan_darah"}
 
 
 # ============================================================
@@ -140,13 +144,13 @@ def _vote_field(
     mob_conf = 0.0
     is_mob_strong = False
 
-    if mobile_value and mobile_value.strip():
+    if mobile_value and mobile_value.strip() and mobile_value.strip() != "-":
         is_mob_sane, _ = _sanity_check_free_text(field, mobile_value)
         norm_key = _normalize_for_match(mobile_value, field)
         if norm_key and is_mob_sane:
             mob_key = norm_key
             mob_conf = float(mobile_confidence)
-            if mob_conf >= 75.0 and mobile_value.strip() != "-":
+            if mob_conf >= 75.0:
                 is_mob_strong = True
             voter_conf = min(100.0, max(0.0, mob_conf))
             vote_scores[norm_key] += mob_conf
@@ -169,9 +173,10 @@ def _vote_field(
             if norm_key:
                 voter_conf = min(100.0, max(0.0, conf))
 
-                # Cross-field consistency bonus for NIK (e.g. 320428 matching Rancaekek/Bandung)
-                if field == "nik" and len(norm_key) == 16:
-                    if norm_key.startswith("320428"):
+                # General Regional & Format Consistency Bonus for NIK (Provinsi 11-92):
+                if field == "nik" and len(norm_key) == 16 and norm_key.isdigit():
+                    from app.ktp.extractor.validators import PROVINCE_CODES
+                    if any(p_code == norm_key[:2] for p_code in PROVINCE_CODES.values()):
                         voter_conf += 10.0
                         conf += 10.0
 

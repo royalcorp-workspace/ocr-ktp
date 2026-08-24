@@ -109,10 +109,6 @@ def normalize_canvas_v1(image: np.ndarray, target_width: int = 1000) -> np.ndarr
     resized_image = cv2.resize(image, (target_width, target_height), interpolation=cv2.INTER_AREA)
     return resized_image
 
-
-# Koordinat persentase ter-kalibrasi untuk ID-1 KTP Indonesia (1000x630)
-# PENTING: Foto KTP ada di KIRI (x: 3-28%), field teks ada di KANAN foto (x: 30%+)
-# NIK ada di atas foto (full-width). Field lain harus x_min >= 0.32 untuk menghindari foto.
 ROI_CONFIG = {
     "nik":               {"x_min": 0.15, "y_min": 0.17, "x_max": 0.95, "y_max": 0.25},
     "nama":              {"x_min": 0.32, "y_min": 0.22, "x_max": 0.75, "y_max": 0.31},

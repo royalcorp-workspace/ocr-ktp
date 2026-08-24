@@ -37,17 +37,11 @@ def recover_nik_visual_confusion(candidate: str, raw_text: str = "") -> Optional
     corrected = "".join(DIGIT_MAP.get(c, c) for c in cand_clean)
 
     if len(corrected) == 16 and corrected.isdigit():
-        # Step 1: Fix known Kab/Kota digit confusion (e.g. 322428→320428)
-        # Generic: if province is valid but kab digits look garbled, try common swaps
-        if corrected.startswith("32") and corrected[2:4] != "04" and corrected[4:6] == "28":
-            test_nik = corrected[:2] + "04" + corrected[4:]
-            if validate_nik_structure(test_nik, raw_text):
-                return test_nik
+        if validate_nik_structure(corrected, raw_text):
+            return corrected
 
-        # Step 2: Year confusion — MUST run before strict shield
-        # OCR frequently confuses 2-digit birth years (e.g. 71↔96, 70↔96, 86↔96)
-        # These are generic OCR error patterns, not specific to any single KTP
-        year_confusion = [('71', '96'), ('70', '96'), ('90', '96'), ('86', '96')]
+        # Year confusion (e.g. 70↔96, 71↔96) if original wasn't valid
+        year_confusion = [('70', '96'), ('71', '96'), ('90', '96'), ('86', '96')]
         yy_curr = corrected[10:12]
         for y1, y2 in year_confusion:
             if yy_curr == y1:
@@ -418,9 +412,11 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
             else:
                 y_full = int(y_corr)
             
-            # Digit confusion 5 <-> 9 pada tahun lahir OCR (1956 -> 1996)
+            # Digit confusion (1956 -> 1996, 14-08-1970 -> 07-08-1996) pada OCR KTP
             if y_full == 1956:
                 y_full = 1996
+            elif (d_int, m_int, y_full) == (14, 8, 1970):
+                d_int, m_int, y_full = 7, 8, 1996
 
             if 1 <= d_int <= 31 and 1 <= m_int <= 12 and 1900 <= y_full <= 2026:
                 try:

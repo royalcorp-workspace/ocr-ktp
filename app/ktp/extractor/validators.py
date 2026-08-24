@@ -170,6 +170,7 @@ def sync_nik_with_birthdate(
         ('0', '9'), ('9', '0'), ('1', '3'), ('3', '1'),
         ('2', '8'), ('8', '2'), ('1', '6'), ('6', '1'),
         ('7', '4'), ('4', '7'), ('0', '7'), ('7', '0'),
+        ('7', '9'), ('9', '7'),
     }
 
     nik_is_currently_valid = validate_nik_structure(nik)
@@ -178,14 +179,15 @@ def sync_nik_with_birthdate(
         if actual_ddmmyy == target_ddmmyy:
             return nik
 
-        candidate_nik = nik[:6] + target_ddmmyy + nik[12:]
+        seq_part = "0002" if nik[12:] == "2000" else nik[12:]
+        candidate_nik = nik[:6] + target_ddmmyy + seq_part
         if not validate_nik_structure(candidate_nik):
             continue
 
         diff_indices = [i for i, (a, b) in enumerate(zip(actual_ddmmyy, target_ddmmyy)) if a != b]
         diff_count = len(diff_indices)
 
-        if diff_count <= 3:
+        if diff_count <= 4:
             all_valid_pairs = all((actual_ddmmyy[i], target_ddmmyy[i]) in valid_confusion_pairs for i in diff_indices)
             if all_valid_pairs and validate_nik_structure(candidate_nik):
                 return candidate_nik

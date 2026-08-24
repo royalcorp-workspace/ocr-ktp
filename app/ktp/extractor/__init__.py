@@ -1,6 +1,7 @@
 from app.ktp.schemas import KTPData
 from app.ktp.extractor.common import parse_label_blocks, extract_text_field
 from app.ktp.extractor import identity, address, civil, validators
+from app.ktp.v1.regional_normalizer import normalize_regional_text, fix_common_ocr_typos
 
 
 class KTPExtractor:
@@ -72,6 +73,13 @@ class KTPExtractor:
         # === Post-Processing & Validasi Kontekstual ===
         nik = validators.sync_nik_with_birthdate(nik, tanggal_lahir, jenis_kelamin)
         tempat_lahir = validators.correct_tempat_lahir_fuzzy(tempat_lahir)
+
+        if alamat:
+            alamat = fix_common_ocr_typos(alamat)
+        if kelurahan_desa:
+            kelurahan_desa = normalize_regional_text(kelurahan_desa, "kelurahan_desa")
+        if kecamatan:
+            kecamatan = normalize_regional_text(kecamatan, "kecamatan")
 
         return KTPData(
             nik=nik,

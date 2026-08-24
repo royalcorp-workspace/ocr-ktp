@@ -136,9 +136,7 @@ def resize_if_small(image: np.ndarray, target_width: int = 1600) -> np.ndarray:
     return image
 
 
-def normalize_image_size(image: np.ndarray, target_width: int = 1600, max_width: int = 1800) -> np.ndarray:
-    """
-def normalize_image_dimensions(image: np.ndarray, target_width: int = 1280, max_width: int = 2000) -> np.ndarray:
+def normalize_image_size(image: np.ndarray, target_width: int = 1280, max_width: int = 2000) -> np.ndarray:
     """
     Normalisasi ukuran gambar KTP:
     - Jika width > max_width (kamera HP 4K/8K): downscale ke max_width menggunakan INTER_AREA.

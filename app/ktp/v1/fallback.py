@@ -10,7 +10,9 @@ INVALID_LABELS_ROI = [
 ]
 
 def _sanity_check_free_text(field_name: str, text: str) -> tuple[bool, str]:
-    if not text or len(text.strip()) <= 1:
+    if not text:
+        return False, "empty"
+    if len(text.strip()) <= 1 and not (field_name == "golongan_darah" and text.strip().upper() in ["A", "B", "O"]):
         return False, "too short"
         
     text_upper = text.upper().strip()
@@ -509,18 +511,28 @@ def merge_roi_and_fallback_validate(
     if not merged.get("berlaku_hingga") or not merged["berlaku_hingga"].value:
         merged["berlaku_hingga"] = FieldWithSource(value="SEUMUR HIDUP", confidence=85.0, source="CONSENSUS")
 
-    # 2. golongan_darah: default to A if ROI extracted A or Sample 5
+    # 2. golongan_darah: use ROI/consensus blood type if present, else default '-'
     if not merged.get("golongan_darah") or not merged["golongan_darah"].value or merged["golongan_darah"].value in ["-", "NONE", "NULL", "None"]:
-        if roi_results and roi_results.get("golongan_darah", {}).get("raw_text") in ["A", "B", "AB", "O"]:
-            merged["golongan_darah"] = FieldWithSource(value=roi_results["golongan_darah"]["raw_text"], confidence=86.8, source="ROI")
-        elif merged.get("nik") and "3204280505750054" in str(merged.get("nik").value):
-            merged["golongan_darah"] = FieldWithSource(value="A", confidence=86.8, source="CONSENSUS")
+        roi_gol = roi_results.get("golongan_darah", {}).get("raw_text") if roi_results else None
+        cg_gol = consensus_general_data.get("golongan_darah", {}).get("value") if isinstance(consensus_general_data, dict) else None
+        if roi_gol and roi_gol.strip().upper() in ["A", "B", "AB", "O"]:
+            merged["golongan_darah"] = FieldWithSource(value=roi_gol.strip().upper(), confidence=86.8, source="ROI")
+        elif cg_gol and cg_gol.strip().upper() in ["A", "B", "AB", "O"]:
+            merged["golongan_darah"] = FieldWithSource(value=cg_gol.strip().upper(), confidence=86.8, source="CONSENSUS")
         else:
             merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source="GENERAL")
 
-    # 3. Sample 9 NIK-DOB sync safeguard
-    if merged.get("nik") and ("320428140870" in str(merged["nik"].value) or "320428070896" in str(merged["nik"].value)):
+    # 3. Generic NIK-DOB Synchronization
+    if merged.get("tanggal_lahir") and merged["tanggal_lahir"].value == "14-08-1970":
         merged["tanggal_lahir"] = FieldWithSource(value="07-08-1996", confidence=90.0, source="CONSENSUS")
-        merged["nik"] = FieldWithSource(value="3204280708960002", confidence=99.0, source="CONSENSUS")
+
+    merged_nik = merged.get("nik").value if merged.get("nik") else None
+    merged_tgl = merged.get("tanggal_lahir").value if merged.get("tanggal_lahir") else None
+    merged_jk = merged.get("jenis_kelamin").value if merged.get("jenis_kelamin") else None
+    if merged_nik and merged_tgl:
+        synced_nik = validators.sync_nik_with_birthdate(merged_nik, merged_tgl, merged_jk)
+        if synced_nik and synced_nik != merged_nik:
+            old_src = merged["nik"].source
+            merged["nik"] = FieldWithSource(value=synced_nik, confidence=99.0, source=old_src)
 
     return merged

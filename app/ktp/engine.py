@@ -6,10 +6,10 @@ from app.ktp.extractor.common import LABELS_PATTERN
 from app.core.logging_config import ktp_logger as logger
 
 
-def score_ocr_text(raw_text: str, candidate_name: str = "") -> dict:
+def score_ocr_text(raw_text: str, candidate_name: str = "", is_v1: bool = False) -> dict:
     """Skor kualitas raw OCR text secara terstruktur dengan validasi keabsahan NIK."""
     if not raw_text or not raw_text.strip():
-        return {"score": 0, "has_nik": False, "has_valid_nik": False, "matched_primary": 0}
+        return {"score": 0, "has_nik": False, "has_valid_nik": False, "matched_primary": 0, "parsed_count": 0}
 
     score = 0
 
@@ -28,7 +28,7 @@ def score_ocr_text(raw_text: str, candidate_name: str = "") -> dict:
                 score += 5
 
     from app.ktp.extractor.identity import extract_nik
-    from app.ktp.extractor.validators import validate_nik_structure
+    from app.ktp.extractor.validators import validate_nik_structure, sync_nik_with_birthdate
 
     nik_cand = extract_nik(None, raw_text)
     has_nik = False
@@ -36,11 +36,24 @@ def score_ocr_text(raw_text: str, candidate_name: str = "") -> dict:
 
     if nik_cand:
         has_nik = True
-        if validate_nik_structure(nik_cand, raw_text):
-            has_valid_nik = True
-            score += 50
+        if is_v1:
+            from app.ktp.extractor import KTPExtractor
+            ext_temp = KTPExtractor().extract(raw_text)
+            synced = sync_nik_with_birthdate(nik_cand, ext_temp.tanggal_lahir, ext_temp.jenis_kelamin)
+            if synced and validate_nik_structure(synced, raw_text):
+                has_valid_nik = True
+                score += 50
+            elif validate_nik_structure(nik_cand, raw_text):
+                has_valid_nik = True
+                score += 50
+            else:
+                score += 15
         else:
-            score += 15
+            if validate_nik_structure(nik_cand, raw_text):
+                has_valid_nik = True
+                score += 50
+            else:
+                score += 15
     else:
         for line in raw_text.splitlines():
             for token in line.split():
@@ -58,12 +71,46 @@ def score_ocr_text(raw_text: str, candidate_name: str = "") -> dict:
     if (has_header or has_nik or matched_primary >= 2) and any(natural in candidate_name for natural in ["Pure Grayscale", "Soft CLAHE Grayscale"]):
         score += 15
 
-    return {"score": score, "has_nik": has_nik, "has_valid_nik": has_valid_nik, "matched_primary": matched_primary}
+    parsed_count = 0
+    if is_v1:
+        from app.ktp.extractor import KTPExtractor
+        extractor = KTPExtractor()
+        parsed = extractor.extract(raw_text)
+
+        if parsed.nama and len(parsed.nama.strip()) >= 3 and not parsed.nama.replace(" ", "").isdigit():
+            score += 15
+            parsed_count += 1
+
+        if parsed.tanggal_lahir or (parsed.tempat_lahir and len(parsed.tempat_lahir.strip()) >= 3):
+            score += 15
+            parsed_count += 1
+
+        if (parsed.alamat and len(parsed.alamat.strip()) >= 5) or parsed.rt_rw:
+            score += 15
+            parsed_count += 1
+
+        civil_fields = [parsed.agama, parsed.status_perkawinan, parsed.pekerjaan, parsed.kewarganegaraan, parsed.jenis_kelamin, parsed.golongan_darah]
+        valid_civil = [f for f in civil_fields if f and str(f).strip()]
+        score += len(valid_civil) * 5
+        parsed_count += len(valid_civil)
+
+    return {
+        "score": score,
+        "has_nik": has_nik,
+        "has_valid_nik": has_valid_nik,
+        "matched_primary": matched_primary,
+        "parsed_count": parsed_count,
+    }
 
 
 def _run_single_candidate(candidate):
     """Worker function: jalankan pytesseract.image_to_data untuk 1 kandidat, return hasil + skor + word_conf_map."""
-    name, cand_img, psm_config = candidate
+    if len(candidate) == 4:
+        name, cand_img, psm_config, is_v1 = candidate
+    else:
+        name, cand_img, psm_config = candidate
+        is_v1 = False
+
     data = pytesseract.image_to_data(cand_img, lang='ind+eng', config=psm_config, output_type=pytesseract.Output.DICT)
     
     lines = []
@@ -98,7 +145,7 @@ def _run_single_candidate(candidate):
         lines.append(" ".join(current_line))
 
     raw_text = "\n".join(lines)
-    result = score_ocr_text(raw_text, candidate_name=name)
+    result = score_ocr_text(raw_text, candidate_name=name, is_v1=is_v1)
     return {
         "name": name,
         "raw_text": raw_text,
@@ -106,65 +153,71 @@ def _run_single_candidate(candidate):
         "has_nik": result["has_nik"],
         "has_valid_nik": result["has_valid_nik"],
         "matched_primary": result["matched_primary"],
+        "parsed_count": result.get("parsed_count", 0),
         "word_conf_map": word_conf_map,
     }
 
 
-def run_tier_candidates(candidates: list, tier_name: str = "Tier 1") -> tuple:
-    """
-    Menjalankan seluruh kandidat di dalam 1 Tier secara PARALEL BERSAMAAN
-    menggunakan concurrent.futures.ThreadPoolExecutor.
-    
-    Return: (best_candidate_dict, meets_early_exit, list_of_all_results)
-    """
+def _pick_overall_best(all_results: list):
+    """Strict 2-Pass Priority Selection: Candidate with has_valid_nik == True ALWAYS wins over invalid ones.
+       Among valid ones, prefer candidates with higher matched_primary count and full-page view over crops."""
+    if not all_results:
+        return None
+    valid_nik_cands = [r for r in all_results if r.get("has_valid_nik")]
+    if valid_nik_cands:
+        return max(
+            valid_nik_cands, 
+            key=lambda x: (x["score"], x["matched_primary"], 0 if "crop" in x["name"].lower() else 1)
+        )
+    return max(
+        all_results, 
+        key=lambda x: (x["score"], x["matched_primary"], 0 if "crop" in x["name"].lower() else 1)
+    )
+
+
+def run_tier_candidates(candidates: list, tier_name: str = "Tier 1", is_v1: bool = False) -> tuple:
     if not candidates:
         return None, False, []
 
-    max_workers = len(candidates)
+    # Capped at 4 worker threads to match container 4.0 CPU cores
+    max_workers = min(len(candidates), 4)
     logger.info(f"[{tier_name}] Executing {len(candidates)} candidates in parallel (ThreadPoolExecutor max_workers={max_workers})...")
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(_run_single_candidate, candidates))
+    task_args = [(c[0], c[1], c[2], is_v1) for c in candidates]
 
-    best_cand = None
-    best_score = -1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(_run_single_candidate, task_args))
 
     for res in results:
         logger.info(
             f"[{tier_name}] EVALUATED CANDIDATE: name='{res['name']}', score={res['score']}, "
-            f"has_nik={res['has_nik']}, has_valid_nik={res['has_valid_nik']}, matched_primary={res['matched_primary']}"
+            f"has_nik={res['has_nik']}, has_valid_nik={res['has_valid_nik']}, matched_primary={res['matched_primary']}, parsed_count={res.get('parsed_count', 0)}"
         )
-        if res["score"] > best_score:
-            best_score = res["score"]
-            best_cand = res
+
+    best_cand = _pick_overall_best(results)
 
     meets_early_exit = False
     if best_cand:
-        # Strict Early Exit Guard: Membutuhkan NIK yang terbukti Valid Strukturnya & Skor Tinggi
-        if best_cand.get("has_valid_nik") and best_cand["score"] >= 65:
-            meets_early_exit = True
-        elif best_cand["score"] >= 85 and best_cand["matched_primary"] >= 3:
-            meets_early_exit = True
+        if is_v1:
+            if (best_cand.get("has_nik") or best_cand.get("has_valid_nik")) and best_cand.get("parsed_count", 0) >= 2 and best_cand["score"] >= 70:
+                meets_early_exit = True
+            elif best_cand.get("parsed_count", 0) >= 3 and best_cand["score"] >= 70:
+                meets_early_exit = True
+        else:
+            if best_cand.get("has_valid_nik") and best_cand["score"] >= 75:
+                meets_early_exit = True
+            elif best_cand["score"] >= 75 and best_cand["matched_primary"] >= 2:
+                meets_early_exit = True
 
     return best_cand, meets_early_exit, results
 
 
-def run_candidates_tiered(image) -> tuple:
-    """
-    Eksekusi OCR KTP bertingkat (Tiered Execution):
-    1. Tier 1 (5 kandidat tercepat & paling sering menang) -> ThreadPoolExecutor PARALEL.
-       Cek Early Exit (score >= 40 & NIK terbaca). Jika terpenuhi -> IMMEDIATE EXIT!
-    2. Tier 2 (Fallback Deep Preprocessing) -> ThreadPoolExecutor PARALEL jika Tier 1 gagal.
-    3. Tier 3 (Rotation Fallback 90, 180, 270) -> PARALEL jika Tier 1 & 2 gagal.
-
-    Return: (best_raw_text, best_candidate_name, best_score, total_candidates_executed, best_word_conf_map)
-    """
+def run_candidates_tiered(image, is_v1: bool = False) -> tuple:
     import time
     from app.ktp.preprocessing import build_tier1_candidates, build_tier2_candidates, build_tier3_candidates
 
     t_start = time.perf_counter()
     total_candidates_executed = 0
-    overall_best = None
     all_tier_results = []
 
     # --- TIER 1 ---
@@ -172,13 +225,12 @@ def run_candidates_tiered(image) -> tuple:
     tier1_candidates = build_tier1_candidates(image)
     tier1_candidates.extend(crop_roi_candidates(image))
     total_candidates_executed += len(tier1_candidates)
-    best_tier1, exit_tier1, results_t1 = run_tier_candidates(tier1_candidates, tier_name="Tier 1")
+    best_tier1, exit_tier1, results_t1 = run_tier_candidates(tier1_candidates, tier_name="Tier 1", is_v1=is_v1)
     all_tier_results.extend(results_t1)
 
-    if best_tier1 and (overall_best is None or best_tier1["score"] > overall_best["score"]):
-        overall_best = best_tier1
+    overall_best = _pick_overall_best(all_tier_results)
 
-    if exit_tier1 and overall_best:
+    if exit_tier1 and overall_best and (overall_best.get("matched_primary", 0) >= 2 or overall_best.get("parsed_count", 0) >= 2):
         logger.info(
             f"EARLY EXIT TRIGGERED AT TIER 1! "
             f"Winner: '{overall_best['name']}', Score: {overall_best['score']}, "
@@ -215,11 +267,10 @@ def run_candidates_tiered(image) -> tuple:
     logger.info("Tier 1 score did not trigger early exit. Proceeding to Tier 2 (Deep Preprocessing)...")
     tier2_candidates = build_tier2_candidates(image)
     total_candidates_executed += len(tier2_candidates)
-    best_tier2, exit_tier2, results_t2 = run_tier_candidates(tier2_candidates, tier_name="Tier 2")
+    best_tier2, exit_tier2, results_t2 = run_tier_candidates(tier2_candidates, tier_name="Tier 2", is_v1=is_v1)
     all_tier_results.extend(results_t2)
 
-    if best_tier2 and (overall_best is None or best_tier2["score"] > overall_best["score"]):
-        overall_best = best_tier2
+    overall_best = _pick_overall_best(all_tier_results)
 
     if exit_tier2 and overall_best:
         logger.info(
@@ -258,11 +309,10 @@ def run_candidates_tiered(image) -> tuple:
     logger.info("Tier 1 & 2 scores did not trigger early exit. Proceeding to Tier 3 (Rotation Fallback)...")
     tier3_candidates = build_tier3_candidates(image)
     total_candidates_executed += len(tier3_candidates)
-    best_tier3, _, results_t3 = run_tier_candidates(tier3_candidates, tier_name="Tier 3")
+    best_tier3, _, results_t3 = run_tier_candidates(tier3_candidates, tier_name="Tier 3", is_v1=is_v1)
     all_tier_results.extend(results_t3)
 
-    if best_tier3 and (overall_best is None or best_tier3["score"] > overall_best["score"]):
-        overall_best = best_tier3
+    overall_best = _pick_overall_best(all_tier_results)
 
     logger.info(
         f"TIERED PIPELINE COMPLETED. Winner: '{overall_best['name'] if overall_best else 'None'}', "
