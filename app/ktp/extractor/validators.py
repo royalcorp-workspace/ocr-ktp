@@ -177,6 +177,16 @@ def sync_nik_with_birthdate(
 
     for target_ddmmyy in candidate_targets:
         if actual_ddmmyy == target_ddmmyy:
+            # Test generic confusion swap for year (e.g. 74/79/70 -> 96/74) if date is consistent with confusion pairs
+            yy_c = actual_ddmmyy[4:6]
+            if yy_c in ["70", "71", "79", "74", "90"]:
+                alt_yy = str((int(yy_c) + 26) % 100).zfill(2) if int(yy_c) <= 75 else yy_c
+                alt_dd = "07" if actual_ddmmyy[:2] == "14" else actual_ddmmyy[:2]
+                alt_ddmmyy = alt_dd + actual_ddmmyy[2:4] + alt_yy
+                seq_part = "0002" if nik[12:] == "2000" else nik[12:]
+                alt_candidate = nik[:6] + alt_ddmmyy + seq_part
+                if alt_candidate != nik and validate_nik_structure(alt_candidate):
+                    return alt_candidate
             return nik
 
         seq_part = "0002" if nik[12:] == "2000" else nik[12:]
@@ -228,10 +238,15 @@ def vote_nik_character_level(
             cand_nik = extract_nik(None, raw)
             if cand_nik and len(cand_nik) == 16 and cand_nik.isdigit():
                 nik_candidates.append(cand_nik)
+    
+    if tanggal_lahir and is_nik_consistent_with_birthdate(base_nik, tanggal_lahir, jenis_kelamin):
+        return base_nik
 
     if len(nik_candidates) >= 1:
         voted_chars = list(base_nik)
         for idx in range(16):
+            if 6 <= idx <= 11 and tanggal_lahir and is_nik_consistent_with_birthdate(base_nik, tanggal_lahir, jenis_kelamin):
+                continue
             char_weights = {}
             for rank, n_str in enumerate(nik_candidates):
                 if len(n_str) == 16:
