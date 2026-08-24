@@ -111,7 +111,7 @@ def normalize_canvas_v1(image: np.ndarray, target_width: int = 1000) -> np.ndarr
 
 ROI_CONFIG = {
     "nik":               {"x_min": 0.15, "y_min": 0.17, "x_max": 0.95, "y_max": 0.25},
-    "nama":              {"x_min": 0.15, "y_min": 0.25, "x_max": 0.75, "y_max": 0.31},
+    "nama":              {"x_min": 0.32, "y_min": 0.25, "x_max": 0.75, "y_max": 0.31},
     "tempat_lahir":      {"x_min": 0.15, "y_min": 0.31, "x_max": 0.75, "y_max": 0.37},
     "tanggal_lahir":     {"x_min": 0.15, "y_min": 0.31, "x_max": 0.75, "y_max": 0.37},
     "jenis_kelamin":     {"x_min": 0.15, "y_min": 0.37, "x_max": 0.55, "y_max": 0.42},
