@@ -414,13 +414,18 @@ def merge_roi_and_fallback_validate(
                     if roi_tokens and (noise_count / len(roi_tokens)) > 0.30:
                         is_roi_valid = False
 
-        # Safeguard Lock NIK: Jika CONSENSUS/mobile_data sudah memiliki NIK 16-digit valid & konsisten DOB,
-        # Kunci nilai CONSENSUS agar ROI tidak bisa menimpa dengan hasil crop OCR yang rusak (Kategori A).
+        # Safeguard Lock NIK: Dynamic verification with DOB confusion sync
         if field == "nik" and cg_val:
-            from app.ktp.extractor.validators import validate_nik_structure
+            from app.ktp.extractor.validators import validate_nik_structure, sync_nik_with_birthdate
             cleaned_cg_nik = re.sub(r'\D', '', str(cg_val))
             if len(cleaned_cg_nik) == 16:
                 cg_val = cleaned_cg_nik
+                cg_dob = consensus_general_data.get("tanggal_lahir", {}).get("value") if isinstance(consensus_general_data, dict) else None
+                cg_jk = consensus_general_data.get("jenis_kelamin", {}).get("value") if isinstance(consensus_general_data, dict) else None
+                if cg_dob:
+                    synced_nik = sync_nik_with_birthdate(cg_val, cg_dob, cg_jk)
+                    if synced_nik and validate_nik_structure(synced_nik):
+                        cg_val = synced_nik
                 if validate_nik_structure(cg_val):
                     is_roi_valid = False
 
