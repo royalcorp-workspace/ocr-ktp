@@ -22,7 +22,14 @@ __pycache__/
 logs/
 
 # Test data & assets (gambar-gambar KTP gak perlu ikut image production)
+test/
 tests/
+roi_investigation/
+
+# Agent & config directories
+.agent/
+.agents/
+.gemini/
 
 # IDE / OS
 .vscode/
@@ -33,4 +40,4 @@ Thumbs.db
 # Misc
 scratch/
 README.md
-*.md1
+*.md
