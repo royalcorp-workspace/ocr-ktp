@@ -394,12 +394,15 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
     tempat_lahir = None
     tanggal_lahir = None
 
-    date_pattern = r'(\b[0-9OolI|!]{1,2})\s*[./\-\s,:]+\s*([0-9OolI|!]{1,2})\s*[./\-\s,:]+\s*([0-9OolI|!]{2,4})\b'
+    date_pattern_4digit = r'(\b[0-9OolI|!]{1,2})\s*[\-./]\s*([0-9OolI|!]{1,2})\s*[\-./]\s*([0-9OolI|!]{4})\b'
+    date_pattern_2digit = r'(\b[0-9OolI|!]{1,2})\s*[\-./]\s*([0-9OolI|!]{1,2})\s*[\-./]\s*([0-9OolI|!]{2})\b'
 
     def _parse_date_str(text: str):
         if not text:
             return None, None
-        m = re.search(date_pattern, text)
+        m = re.search(date_pattern_4digit, text)
+        if not m:
+            m = re.search(date_pattern_2digit, text)
         if not m:
             # Fallback untuk tanggal 8 digit rapat tanpa separator: DDMMYYYY
             m_dense = re.search(r'\b([0-3][0-9])([0-1][0-9])((?:19|20)\d{2})\b', text)
@@ -469,7 +472,7 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
                                 break
                     break
 
-        date_match = re.search(date_pattern, combined_block)
+        date_match = re.search(date_pattern_4digit, combined_block) or re.search(date_pattern_2digit, combined_block)
         if date_match:
             place_part = combined_block[:date_match.start()].strip()
         else:
@@ -516,7 +519,7 @@ def extract_tempat_tanggal_lahir(block: Optional[str], full_text: str) -> Tuple[
             tgl_result, _ = _parse_date_str(line)
             if tgl_result:
                 tanggal_lahir = tgl_result
-                date_match = re.search(date_pattern, line)
+                date_match = re.search(date_pattern_4digit, line) or re.search(date_pattern_2digit, line)
                 if date_match:
                     place_part = line[:date_match.start()].strip()
                     # If empty place on the same line, check previous line

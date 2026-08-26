@@ -11,7 +11,7 @@ def extract_alamat(block: Optional[str], full_text: str = "") -> Optional[str]:
             line_up = line.upper()
             if any(hdr in line_up for hdr in ["PROVINSI", "KABUPATEN", "KOTA", "NIK", "NAMA"]):
                 continue
-            if any(kw in line_up for kw in ["KP", "JL", "JALAN", "GANG", "GG", "BLOK", "PERUM", "DUSUN", "KAMPUNG"]):
+            if any(kw in line_up for kw in ["KP", "JL", "JALAN", "GANG", "GG", "BLOK", "PERUM", "DUSUN", "KAMPUNG", "BOJONG", "DS", "DESA", "KEL", "RT", "RW"]):
                 text_to_process = line
                 break
 
@@ -41,18 +41,6 @@ def extract_alamat(block: Optional[str], full_text: str = "") -> Optional[str]:
     val = re.sub(r'\s+-\s+', ' ', val)
     val = re.sub(r'\s{2,}', ' ', val).strip()
 
-    for kw in [
-        r'\b(RT|RW|RT/RW|RTRW|RTIRW|RT/AW|RT/RAW|RT/RN|AT/AW|AT/RW)\b',
-        r'\bKEL\b', r'\bDESA\b', r'\bKECAMATAN\b',
-        r'\bLAKI\b', r'\bPEREMPUAN\b', r'\bISLAM\b', r'\bKRISTEN\b', r'\bKATHOLIK\b',
-        r'\bKAWIN\b', r'\bBELUM\b', r'\bPEKERJAAN\b', r'\bBERLAKU\b'
-    ]:
-        m = re.search(kw, val, re.IGNORECASE)
-        if m:
-            val = val[:m.start()].strip()
-            break
-
-    val = re.sub(r'[\s~]*RTA?[\s:]+.*$', '', val, flags=re.IGNORECASE).strip()
     val = re.sub(r'\s+\b(DAI|DA|OAI|OA|DAL|DAl|DI|AD|PP\.\s*WS)\b[\.\s]*$', '', val, flags=re.IGNORECASE).strip()
     val = re.sub(r'^[I|1]\s+(JL)', r'\1', val).strip()
     # Hapus trailing noise symbols dan em-dash fragments (e.g. "» LI", "| A", "— I", "~ SE", "BLOK A-S :")
@@ -104,9 +92,9 @@ def extract_rt_rw(
         if rt_corr.isdigit() and rw_corr.isdigit() and len(rt_corr) <= 3 and len(rw_corr) <= 3:
             return f"{rt_corr}/{rw_corr}"
 
-    match_6digit = re.search(r'\b([0-9OolI|!sSZzBbGqUcD]{3})\s*([0-9OolI|!sSZzBbGqUcD]{3})\b', text_to_search)
+    match_6digit = re.search(r'\b(RT|RW|RT/RW|RTRW|RTIRW|RT/AW)\s*[:=.\-]?\s*([0-9OolI|!sSZzBbGqUcD]{3})\s*[/:\.\-]?\s*([0-9OolI|!sSZzBbGqUcD]{3})\b', text_to_search, re.IGNORECASE)
     if match_6digit:
-        rt_raw, rw_raw = match_6digit.groups()
+        _, rt_raw, rw_raw = match_6digit.groups()
         rt_corr = "".join(DIGIT_MAP.get(c, c) for c in rt_raw).zfill(3)
         rw_corr = "".join(DIGIT_MAP.get(c, c) for c in rw_raw).zfill(3)
         if rt_corr.isdigit() and rw_corr.isdigit():

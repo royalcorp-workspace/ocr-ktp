@@ -70,8 +70,8 @@ class KTPExtractor:
             if not berlaku_hingga:
                 berlaku_hingga = civil.extract_berlaku_hingga(None, cleaned_text)
 
-        # === Post-Processing & Validasi Kontekstual ===
-        nik = validators.sync_nik_with_birthdate(nik, tanggal_lahir, jenis_kelamin)
+        # === Post-Processing & Validasi Kontekstual (Read-only consistency) ===
+        is_dob_consistent = validators.check_nik_dob_consistency(nik, tanggal_lahir, jenis_kelamin)
         tempat_lahir = validators.correct_tempat_lahir_fuzzy(tempat_lahir)
 
         if alamat:

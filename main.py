@@ -57,9 +57,10 @@ async def request_id_middleware(request: Request, call_next):
         request_id_var.reset(token)
 
 
-from app.api import v1_routes
+from app.api import v1_routes, v2_routes
 app.include_router(ktp_routes.router)
 app.include_router(v1_routes.router)
+app.include_router(v2_routes.router)
 
 
 @app.get("/health", tags=["health"])

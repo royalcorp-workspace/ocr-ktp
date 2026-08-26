@@ -212,14 +212,9 @@ def merge_roi_and_fallback_extract(
         
         general_text = getattr(general_parsed_data, field, None)
         if field == "nik" and general_text:
-            from app.ktp.extractor.validators import sync_nik_with_birthdate
-            synced = sync_nik_with_birthdate(
-                str(general_text),
-                getattr(general_parsed_data, "tanggal_lahir", None),
-                getattr(general_parsed_data, "jenis_kelamin", None)
-            )
-            if synced:
-                general_text = synced
+            cleaned_gen_nik = re.sub(r'\D', '', str(general_text))
+            if len(cleaned_gen_nik) == 16:
+                general_text = cleaned_gen_nik
         
         roi_calibrated_conf = calculate_field_confidence(
             field_name=field,
@@ -319,17 +314,44 @@ def merge_roi_and_fallback_extract(
                     merged["jenis_kelamin"] = FieldWithSource(value=inferred_jk, confidence=88.0, source="GENERAL")
 
                 if not merged.get("kewarganegaraan") or not merged["kewarganegaraan"].value:
-                    merged["kewarganegaraan"] = FieldWithSource(value="WNI", confidence=85.0, source="GENERAL")
+                    merged["kewarganegaraan"] = FieldWithSource(value="WNI", confidence=85.0, source="FALLBACK")
         except ValueError:
             pass
 
     if merged_nik and merged_tgl:
-        synced_nik = validators.sync_nik_with_birthdate(merged_nik, merged_tgl, merged_jk)
-        if synced_nik and synced_nik != merged_nik:
-            merged["nik"] = FieldWithSource(value=synced_nik, confidence=99.0, source="GENERAL")
+        is_consistent = validators.is_nik_consistent_with_birthdate(merged_nik, merged_tgl, merged_jk)
+        if is_consistent and merged.get("nik"):
+            merged["nik"].confidence = max(merged["nik"].confidence, 95.0)
 
-    if not merged.get("golongan_darah") or not merged["golongan_darah"].value:
-        merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source="GENERAL")
+    # 1. berlaku_hingga: set UNRESOLVED if null
+    if not merged.get("berlaku_hingga") or not merged["berlaku_hingga"].value:
+        merged["berlaku_hingga"] = FieldWithSource(value=None, confidence=0.0, source="UNRESOLVED")
+
+    # 2. golongan_darah: check ROI/General OCR for A, B, AB, O, else default '-' with FALLBACK
+    if not merged.get("golongan_darah") or not merged["golongan_darah"].value or merged["golongan_darah"].value in ["-", "NONE", "NULL", "None"]:
+        roi_gol = roi_results.get("golongan_darah", {}).get("raw_text") if roi_results else None
+        gen_gol = getattr(general_parsed_data, "golongan_darah", None)
+        if roi_gol and roi_gol.strip().upper() in ["A", "B", "AB", "O"]:
+            merged["golongan_darah"] = FieldWithSource(value=roi_gol.strip().upper(), confidence=86.8, source="ROI")
+        elif gen_gol and gen_gol.strip().upper() in ["A", "B", "AB", "O"]:
+            merged["golongan_darah"] = FieldWithSource(value=gen_gol.strip().upper(), confidence=86.8, source="GENERAL")
+        else:
+            merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source="FALLBACK")
+
+    # 3. Regional Hierarchy Fallback for kecamatan if null or invalid
+    merged_kec = merged.get("kecamatan").value if merged.get("kecamatan") else None
+    merged_kel = merged.get("kelurahan_desa").value if merged.get("kelurahan_desa") else None
+    if (not merged_kec or len(merged_kec.strip()) < 3) and merged_kel:
+        from app.ktp.v1.regional_normalizer import lookup_regional_hierarchy
+        inferred = lookup_regional_hierarchy(kelurahan_desa=merged_kel)
+        if inferred and inferred.get("kecamatan"):
+            merged["kecamatan"] = FieldWithSource(value=inferred["kecamatan"], confidence=88.0, source="INFERRED")
+
+    # 4. Fallback for agama and status_perkawinan if null -> UNRESOLVED
+    if not merged.get("agama") or not merged["agama"].value:
+        merged["agama"] = FieldWithSource(value=None, confidence=0.0, source="UNRESOLVED")
+    if not merged.get("status_perkawinan") or not merged["status_perkawinan"].value:
+        merged["status_perkawinan"] = FieldWithSource(value=None, confidence=0.0, source="UNRESOLVED")
 
     return merged
 
@@ -369,7 +391,14 @@ def merge_roi_and_fallback_validate(
         cg_conf = cg.get("confidence", 0.0)
         cg_source = cg.get("source", "GENERAL")
         
-        mapped_source = "CONSENSUS" if "mobile" in cg_source else "GENERAL"
+        if cg_source == "mobile+tesseract":
+            mapped_source = "CONSENSUS"
+        elif cg_source == "mobile":
+            mapped_source = "MOBILE"
+        elif cg_source == "tesseract":
+            mapped_source = "GENERAL"
+        else:
+            mapped_source = "GENERAL"
         
         roi_calibrated_conf = calculate_field_confidence(
             field_name=field,
@@ -419,18 +448,12 @@ def merge_roi_and_fallback_validate(
                     if roi_tokens and (noise_count / len(roi_tokens)) > 0.30:
                         is_roi_valid = False
 
-        # Safeguard Lock NIK: Dynamic verification with DOB confusion sync
+        # Safeguard Lock NIK: Check validity and consistency without mutating NIK string
         if field == "nik" and cg_val:
-            from app.ktp.extractor.validators import validate_nik_structure, sync_nik_with_birthdate
+            from app.ktp.extractor.validators import validate_nik_structure
             cleaned_cg_nik = re.sub(r'\D', '', str(cg_val))
             if len(cleaned_cg_nik) == 16:
                 cg_val = cleaned_cg_nik
-                cg_dob = consensus_general_data.get("tanggal_lahir", {}).get("value") if isinstance(consensus_general_data, dict) else None
-                cg_jk = consensus_general_data.get("jenis_kelamin", {}).get("value") if isinstance(consensus_general_data, dict) else None
-                if cg_dob:
-                    synced_nik = sync_nik_with_birthdate(cg_val, cg_dob, cg_jk)
-                    if synced_nik and validate_nik_structure(synced_nik):
-                        cg_val = synced_nik
                 if validate_nik_structure(cg_val):
                     is_roi_valid = False
 
@@ -514,18 +537,14 @@ def merge_roi_and_fallback_validate(
                     merged["jenis_kelamin"] = FieldWithSource(value=inferred_jk, confidence=88.0, source="CONSENSUS")
 
                 if not merged.get("kewarganegaraan") or not merged["kewarganegaraan"].value:
-                    merged["kewarganegaraan"] = FieldWithSource(value="WNI", confidence=85.0, source="CONSENSUS")
+                    merged["kewarganegaraan"] = FieldWithSource(value="WNI", confidence=85.0, source="FALLBACK")
         except ValueError:
             pass
 
-    # Clean up berlaku_hingga if contaminated by DOB
-    if merged.get("berlaku_hingga") and merged.get("berlaku_hingga").value == merged_tgl:
-        merged["berlaku_hingga"] = FieldWithSource(value="SEUMUR HIDUP", confidence=88.0, source="CONSENSUS")
-
     # Final Fallback Safeguards:
-    # 1. berlaku_hingga: default to SEUMUR HIDUP if null
+    # 1. berlaku_hingga: set UNRESOLVED if null
     if not merged.get("berlaku_hingga") or not merged["berlaku_hingga"].value:
-        merged["berlaku_hingga"] = FieldWithSource(value="SEUMUR HIDUP", confidence=85.0, source="CONSENSUS")
+        merged["berlaku_hingga"] = FieldWithSource(value=None, confidence=0.0, source="UNRESOLVED")
 
     # 2. golongan_darah: use ROI/consensus blood type if present, else default '-'
     if not merged.get("golongan_darah") or not merged["golongan_darah"].value or merged["golongan_darah"].value in ["-", "NONE", "NULL", "None"]:
@@ -536,24 +555,19 @@ def merge_roi_and_fallback_validate(
         elif cg_gol and cg_gol.strip().upper() in ["A", "B", "AB", "O"]:
             merged["golongan_darah"] = FieldWithSource(value=cg_gol.strip().upper(), confidence=86.8, source="CONSENSUS")
         else:
-            merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source="GENERAL")
+            merged["golongan_darah"] = FieldWithSource(value="-", confidence=88.0, source="FALLBACK")
 
-    # 3. Generic NIK-DOB Synchronization
-
+    # 3. Read-only NIK-DOB Consistency Evaluation
     if merged_nik and len(merged_nik) == 16 and merged_nik.isdigit():
-        synced_nik = validators.sync_nik_with_birthdate(merged_nik, merged_tgl, merged_jk)
-        if synced_nik and synced_nik != merged_nik:
-            old_src = merged["nik"].source
-            merged["nik"] = FieldWithSource(value=synced_nik, confidence=99.0, source=old_src)
-            merged_nik = synced_nik
+        is_consistent = validators.check_nik_dob_consistency(merged_nik, merged_tgl, merged_jk)
+        if not merged_tgl or merged_tgl == "14-08-1970":
+            d_s, m_s, y_s = merged_nik[6:8], merged_nik[8:10], merged_nik[10:12]
+            d_int = int(d_s) - 40 if int(d_s) > 40 else int(d_s)
+            y_full_s = int(y_s) + 1900 if int(y_s) > 26 else int(y_s) + 2000
+            if 1 <= d_int <= 31 and 1 <= int(m_s) <= 12:
+                dob_from_nik = f"{str(d_int).zfill(2)}-{m_s}-{y_full_s}"
+                merged["tanggal_lahir"] = FieldWithSource(value=dob_from_nik, confidence=90.0, source="INFERRED")
 
-        d_s, m_s, y_s = merged_nik[6:8], merged_nik[8:10], merged_nik[10:12]
-        d_int = int(d_s) - 40 if int(d_s) > 40 else int(d_s)
-        y_full_s = int(y_s) + 1900 if int(y_s) > 26 else int(y_s) + 2000
-        if 1 <= d_int <= 31 and 1 <= int(m_s) <= 12:
-            dob_from_nik = f"{str(d_int).zfill(2)}-{m_s}-{y_full_s}"
-            if merged_tgl != dob_from_nik and (not merged_tgl or merged_tgl == "14-08-1970" or abs(int(y_s) - int(merged_tgl[-2:] if len(merged_tgl)>=10 and merged_tgl[-2:].isdigit() else "0")) > 10):
-                merged["tanggal_lahir"] = FieldWithSource(value=dob_from_nik, confidence=90.0, source="CONSENSUS")
     # 4. Regional Hierarchy Fallback for kecamatan if null or garbled
     merged_kec = merged.get("kecamatan").value if merged.get("kecamatan") else None
     merged_kel = merged.get("kelurahan_desa").value if merged.get("kelurahan_desa") else None
@@ -561,12 +575,12 @@ def merge_roi_and_fallback_validate(
         from app.ktp.v1.regional_normalizer import lookup_regional_hierarchy
         inferred = lookup_regional_hierarchy(kelurahan_desa=merged_kel)
         if inferred and inferred.get("kecamatan"):
-            merged["kecamatan"] = FieldWithSource(value=inferred["kecamatan"], confidence=88.0, source="CONSENSUS")
+            merged["kecamatan"] = FieldWithSource(value=inferred["kecamatan"], confidence=88.0, source="INFERRED")
 
-    # 5. Fallback Defaults for agama and status_perkawinan if null
+    # 5. Fallback for agama and status_perkawinan if null -> UNRESOLVED
     if not merged.get("agama") or not merged["agama"].value:
-        merged["agama"] = FieldWithSource(value="ISLAM", confidence=85.0, source="CONSENSUS")
+        merged["agama"] = FieldWithSource(value=None, confidence=0.0, source="UNRESOLVED")
     if not merged.get("status_perkawinan") or not merged["status_perkawinan"].value:
-        merged["status_perkawinan"] = FieldWithSource(value="KAWIN", confidence=85.0, source="CONSENSUS")
+        merged["status_perkawinan"] = FieldWithSource(value=None, confidence=0.0, source="UNRESOLVED")
 
     return merged

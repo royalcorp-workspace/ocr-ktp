@@ -45,81 +45,97 @@ def process_ktp_image_v1(image_bytes: bytes) -> KTPOcrResponseV1:
     field_specific_raw_text = {}
     field_specific_word_map = {}
 
-    # Multi-Candidate Server Field Recovery & NIK Consensus Voting
+    # Multi-Candidate Server Field Recovery & Voting across all 15 fields
     if all_tier_results:
-        # NIK Voting across all server candidates (including ROI NIK crop)
-        nik_tess_entries = []
+        # Pre-extract all candidate structures once
+        candidate_extractions = []
         for cand in all_tier_results:
             cand_raw = cand.get("raw_text", "")
-            if cand_raw and (cand.get("score", 0) > 0 or "ROI" in cand.get("name", "")):
+            cand_score = float(cand.get("score", 0))
+            if "ROI" in cand.get("name", ""):
+                cand_score = max(cand_score, 50.0)
+            if cand_raw and cand_score > 0:
                 cand_parsed = extractor.extract(cand_raw)
-                cand_nik = getattr(cand_parsed, "nik", None)
-                if cand_nik and str(cand_nik).strip():
-                    # Memberikan boost confidence 100 untuk ROI NIK
-                    cand_score = 100.0 if "ROI" in cand.get("name", "") else float(cand.get("score", 0))
-                    nik_tess_entries.append({
-                        "value": str(cand_nik).strip(),
-                        "confidence": cand_score,
-                        "candidate_name": cand.get("name", "tesseract")
-                    })
+                candidate_extractions.append({
+                    "raw_text": cand_raw,
+                    "score": cand_score,
+                    "name": cand.get("name", "tesseract"),
+                    "word_conf_map": cand.get("word_conf_map", {}),
+                    "parsed": cand_parsed
+                })
 
-        if nik_tess_entries:
-            nik_vote_res = _vote_field("nik", None, 0.0, nik_tess_entries)
-            voted_nik = nik_vote_res.get("value")
-            
-            # Character-level position consensus refinement across all candidate raw_texts
-            all_raws = [c.get("raw_text", "") for c in all_tier_results if c.get("raw_text")]
-            from app.ktp.extractor.validators import vote_nik_character_level
-            tgl_l = getattr(general_parsed_data, "tanggal_lahir", None)
-            j_kel = getattr(general_parsed_data, "jenis_kelamin", None)
-            voted_nik = vote_nik_character_level(voted_nik, all_raws, tgl_l, j_kel)
-
-            if voted_nik:
-                setattr(general_parsed_data, "nik", voted_nik)
-                for cand in all_tier_results:
-                    cand_raw = cand.get("raw_text", "")
-                    if cand_raw and voted_nik in cand_raw:
-                        field_specific_raw_text["nik"] = cand_raw
-                        field_specific_word_map["nik"] = cand.get("word_conf_map", {})
-                        break
         field_names = [
             "nik", "nama", "tempat_lahir", "tanggal_lahir", "jenis_kelamin",
             "golongan_darah", "alamat", "rt_rw", "kelurahan_desa", "kecamatan",
             "agama", "status_perkawinan", "pekerjaan", "kewarganegaraan", "berlaku_hingga"
         ]
+
+        for field in field_names:
+            tess_entries = []
+            for cand_item in candidate_extractions:
+                val = getattr(cand_item["parsed"], field, None)
+                if val and str(val).strip():
+                    tess_entries.append({
+                        "value": str(val).strip(),
+                        "confidence": cand_item["score"],
+                        "candidate_name": cand_item["name"]
+                    })
+
+            if tess_entries:
+                vote_res = _vote_field(field, None, 0.0, tess_entries)
+                voted_val = vote_res.get("value")
+                if voted_val:
+                    if field in ["kelurahan_desa", "kecamatan", "tempat_lahir"]:
+                        voted_val = normalize_regional_text(str(voted_val), field)
+                    if field == "nama":
+                        from app.ktp.extractor.identity import assess_name_quality
+                        if not assess_name_quality(str(voted_val)):
+                            voted_val = None
+                    if voted_val:
+                        setattr(general_parsed_data, field, voted_val)
+
+                        # Find matching candidate for raw text & word conf map
+                        for cand_item in candidate_extractions:
+                            if cand_item["raw_text"] and voted_val in cand_item["raw_text"]:
+                                field_specific_raw_text[field] = cand_item["raw_text"]
+                                field_specific_word_map[field] = cand_item["word_conf_map"]
+                                break
+
+        # NIK Character-level position consensus refinement
+        voted_nik = getattr(general_parsed_data, "nik", None)
+        if voted_nik and len(voted_nik) == 16 and voted_nik.isdigit():
+            all_raws = [c["raw_text"] for c in candidate_extractions if c.get("raw_text")]
+            from app.ktp.extractor.validators import vote_nik_character_level
+            tgl_l = getattr(general_parsed_data, "tanggal_lahir", None)
+            j_kel = getattr(general_parsed_data, "jenis_kelamin", None)
+            refined_nik = vote_nik_character_level(voted_nik, all_raws, tgl_l, j_kel)
+            final_nik_val = refined_nik if (refined_nik and isinstance(refined_nik, str)) else voted_nik
+
+            if final_nik_val:
+                setattr(general_parsed_data, "nik", final_nik_val)
+                for cand_item in candidate_extractions:
+                    if cand_item["raw_text"] and final_nik_val in cand_item["raw_text"]:
+                        field_specific_raw_text["nik"] = cand_item["raw_text"]
+                        field_specific_word_map["nik"] = cand_item["word_conf_map"]
+                        break
+
+        # Fallback loop for any remaining empty fields
         for field in field_names:
             curr_val = getattr(general_parsed_data, field, None)
-            if curr_val and field in ["kelurahan_desa", "kecamatan", "tempat_lahir"]:
-                curr_val = normalize_regional_text(str(curr_val), field)
-                setattr(general_parsed_data, field, curr_val)
-
-            if curr_val and str(curr_val).strip() != "":
-                field_specific_raw_text[field] = best_raw_text
-                field_specific_word_map[field] = best_word_conf_map
-            else:
-                for cand in all_tier_results:
-                    cand_raw = cand.get("raw_text", "")
-                    if cand_raw and (cand.get("score", 0) > 0 or "ROI" in cand.get("name", "")):
-                        cand_parsed = extractor.extract(cand_raw)
-                        cand_val = getattr(cand_parsed, field, None)
-                        if cand_val and field in ["kelurahan_desa", "kecamatan", "tempat_lahir"]:
+            if not curr_val or str(curr_val).strip() == "":
+                for cand_item in candidate_extractions:
+                    cand_val = getattr(cand_item["parsed"], field, None)
+                    if cand_val and str(cand_val).strip() != "":
+                        if field in ["kelurahan_desa", "kecamatan", "tempat_lahir"]:
                             cand_val = normalize_regional_text(str(cand_val), field)
-                        if cand_val and str(cand_val).strip() != "":
-                            if field == "nama":
-                                from app.ktp.extractor.identity import assess_name_quality
-                                if not assess_name_quality(str(cand_val)):
-                                    continue
-                            cur_v = getattr(general_parsed_data, field, None)
-                            if not cur_v or str(cur_v).strip() == "":
-                                setattr(general_parsed_data, field, cand_val)
-                                field_specific_raw_text[field] = cand_raw
-                                field_specific_word_map[field] = cand.get("word_conf_map", {})
-                                break
-                            elif field == "nama" and len(str(cur_v).strip().split()) == 1 and len(str(cand_val).strip().split()) >= 2:
-                                setattr(general_parsed_data, field, cand_val)
-                                field_specific_raw_text[field] = cand_raw
-                                field_specific_word_map[field] = cand.get("word_conf_map", {})
-                                break
+                        if field == "nama":
+                            from app.ktp.extractor.identity import assess_name_quality
+                            if not assess_name_quality(str(cand_val)):
+                                continue
+                        setattr(general_parsed_data, field, cand_val)
+                        field_specific_raw_text[field] = cand_item["raw_text"]
+                        field_specific_word_map[field] = cand_item["word_conf_map"]
+                        break
 
         # Prefer birthdate with realistic birth year (1930 - 2015) over recent years (>2015)
         if general_parsed_data.tanggal_lahir:
@@ -144,16 +160,15 @@ def process_ktp_image_v1(image_bytes: bytes) -> KTPOcrResponseV1:
             if not assess_name_quality(str(general_parsed_data.nama)):
                 general_parsed_data.nama = None
 
-        # Post-merge NIK birthdate sync
+        # Post-merge NIK consistency validation (read-only evidence logging)
         if general_parsed_data.nik and general_parsed_data.tanggal_lahir:
-            from app.ktp.extractor.validators import sync_nik_with_birthdate
-            synced_nik = sync_nik_with_birthdate(
+            from app.ktp.extractor.validators import is_nik_consistent_with_birthdate
+            is_consistent = is_nik_consistent_with_birthdate(
                 general_parsed_data.nik,
                 general_parsed_data.tanggal_lahir,
                 general_parsed_data.jenis_kelamin
             )
-            if synced_nik:
-                general_parsed_data.nik = synced_nik
+            logger.info(f"[SERVICE_V1] NIK-DOB Consistency Check: {is_consistent} (NIK: {general_parsed_data.nik})")
     
     # 3. Normalisasi Kanvas V1 & ROI OCR
     normalized_image = normalize_canvas_v1(oriented_image)

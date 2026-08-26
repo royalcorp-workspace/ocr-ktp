@@ -4,7 +4,7 @@ from pydantic import BaseModel
 class FieldWithSource(BaseModel):
     value: Optional[str] = None
     confidence: float = 0.0
-    source: str = "NONE" # ROI, GENERAL, atau CONSENSUS
+    source: str = "NONE" # ROI, GENERAL, CONSENSUS, MOBILE, FALLBACK, INFERRED, UNRESOLVED
 
 class KTPOcrResponseV1(BaseModel):
     nik: FieldWithSource

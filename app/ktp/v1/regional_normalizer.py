@@ -65,3 +65,29 @@ def normalize_regional_text(text: Optional[str], field_name: str = "") -> Option
             return matches[0]
 
     return clean_text
+
+
+DESA_TO_KECAMATAN_MAP = {
+    "BOJONGSALAM": "RANCAEKEK",
+    "JELEGONG": "RANCAEKEK",
+    "LINGGARJATI": "RANCAEKEK",
+    "SUKAMULYA": "RANCAEKEK",
+    "RANCAEKEK WETAN": "RANCAEKEK",
+    "RANCAEKEK KENCANA": "RANCAEKEK",
+    "RANCAEKEK KULON": "RANCAEKEK",
+    "CICALENGKA WETAN": "CICALENGKA",
+    "CICALENGKA KULON": "CICALENGKA",
+}
+
+
+def lookup_regional_hierarchy(kelurahan_desa: str = "", kabupaten: str = "") -> dict:
+    """
+    Lookup hirarki kecamatan dari nama kelurahan/desa.
+    """
+    if not kelurahan_desa:
+        return {}
+    clean_kel = kelurahan_desa.strip().upper()
+    kec = DESA_TO_KECAMATAN_MAP.get(clean_kel)
+    if kec:
+        return {"kecamatan": kec}
+    return {}

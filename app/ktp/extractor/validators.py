@@ -174,97 +174,54 @@ def score_nik_candidate(nik: str) -> float:
     return max(0.0, min(100.0, score))
 
 
-def sync_nik_with_birthdate(
+def check_nik_dob_consistency(
     nik: Optional[str],
     tanggal_lahir_str: Optional[str],
-    jenis_kelamin_str: Optional[str]
-) -> Optional[str]:
+    jenis_kelamin_str: Optional[str] = None
+) -> bool:
     """
-    Koreksi cerdas NIK berbasis Tanggal Lahir (DD-MM-YYYY) dan Gender.
-    Tanggal lahir yang valid dianggap sebagai Ground Truth kontekstual untuk
-    memperbaiki 6-digit tengah NIK (DDMMYY).
+    Evaluasi konsistensi read-only antara NIK (DDMMYY) dan Tanggal Lahir (DD-MM-YYYY).
+    TIDAK MENGUBAH / MUTASI digit NIK.
     """
     if not nik or len(nik) != 16 or not nik.isdigit():
-        return nik
+        return False
     if not tanggal_lahir_str:
-        return nik
+        return False
 
     parts = tanggal_lahir_str.split('-')
     if len(parts) != 3 or len(parts[0]) != 2 or len(parts[1]) != 2 or len(parts[2]) != 4:
-        return nik
+        return False
 
     try:
         d_target = int(parts[0])
         m_target = int(parts[1])
         y_target = parts[2][2:]
     except ValueError:
-        return nik
+        return False
 
     try:
         actual_dd = int(nik[6:8])
+        actual_mm = int(nik[8:10])
+        actual_yy = nik[10:12]
     except ValueError:
-        return nik
+        return False
 
-    # Evaluasi opsi gender (Perempuan = DD + 40, Laki-Laki = DD)
-    candidate_targets = []
-    if jenis_kelamin_str == "PEREMPUAN":
-        candidate_targets.append(f"{(d_target + 40):02d}{m_target:02d}{y_target}")
-    elif jenis_kelamin_str == "LAKI-LAKI":
-        candidate_targets.append(f"{d_target:02d}{m_target:02d}{y_target}")
-    else:
-        # Jika gender tidak pasti, uji sesuai kecenderungan DD NIK saat ini
-        if actual_dd > 40:
-            candidate_targets.append(f"{(d_target + 40):02d}{m_target:02d}{y_target}")
-            candidate_targets.append(f"{d_target:02d}{m_target:02d}{y_target}")
-        else:
-            candidate_targets.append(f"{d_target:02d}{m_target:02d}{y_target}")
-            candidate_targets.append(f"{(d_target + 40):02d}{m_target:02d}{y_target}")
+    real_dd = actual_dd - 40 if actual_dd > 40 else actual_dd
+    if real_dd == d_target and actual_mm == m_target and actual_yy == y_target:
+        return True
 
-    actual_ddmmyy = nik[6:12]
+    return False
 
-    # Pasangan karakter confusion OCR visual yang umum (misal '07' terbaca '14')
-    valid_confusion_pairs = {
-        ('5', '6'), ('6', '5'), ('0', '6'), ('6', '0'),
-        ('1', '7'), ('7', '1'), ('3', '8'), ('8', '3'),
-        ('0', '8'), ('8', '0'), ('1', '9'), ('9', '1'),
-        ('0', '5'), ('5', '0'), ('0', '1'), ('1', '0'),
-        ('1', '4'), ('4', '1'), ('2', '3'), ('3', '2'),
-        ('4', '9'), ('9', '4'), ('5', '9'), ('9', '5'),
-        ('0', '9'), ('9', '0'), ('1', '3'), ('3', '1'),
-        ('2', '8'), ('8', '2'), ('1', '6'), ('6', '1'),
-        ('7', '4'), ('4', '7'), ('0', '7'), ('7', '0'),
-        ('7', '9'), ('9', '7'),
-    }
 
-    nik_is_currently_valid = validate_nik_structure(nik)
-
-    for target_ddmmyy in candidate_targets:
-        if actual_ddmmyy == target_ddmmyy:
-            # Test generic confusion swap for year (e.g. 74/79/70 -> 96/74) if date is consistent with confusion pairs
-            yy_c = actual_ddmmyy[4:6]
-            if yy_c in ["70", "71", "79", "74", "90"]:
-                alt_yy = str((int(yy_c) + 26) % 100).zfill(2) if int(yy_c) <= 75 else yy_c
-                alt_dd = "07" if actual_ddmmyy[:2] == "14" else actual_ddmmyy[:2]
-                alt_ddmmyy = alt_dd + actual_ddmmyy[2:4] + alt_yy
-                seq_part = "0002" if nik[12:] == "2000" else nik[12:]
-                alt_candidate = nik[:6] + alt_ddmmyy + seq_part
-                if alt_candidate != nik and validate_nik_structure(alt_candidate):
-                    return alt_candidate
-            return nik
-
-        seq_part = "0002" if nik[12:] == "2000" else nik[12:]
-        candidate_nik = nik[:6] + target_ddmmyy + seq_part
-        if not validate_nik_structure(candidate_nik):
-            continue
-
-        diff_indices = [i for i, (a, b) in enumerate(zip(actual_ddmmyy, target_ddmmyy)) if a != b]
-        diff_count = len(diff_indices)
-
-        if diff_count <= 4:
-            all_valid_pairs = all((actual_ddmmyy[i], target_ddmmyy[i]) in valid_confusion_pairs for i in diff_indices)
-            if all_valid_pairs and validate_nik_structure(candidate_nik):
-                return candidate_nik
-
+def sync_nik_with_birthdate(
+    nik: Optional[str],
+    tanggal_lahir_str: Optional[str],
+    jenis_kelamin_str: Optional[str]
+) -> Optional[str]:
+    """
+    DEPRECATED MUTATION FUNCTION: Read-only passthrough for backward compatibility.
+    AKAN SELALU mengembalikan NIK asli dari OCR tanpa melakukan mutasi digit.
+    """
     return nik
 
 
@@ -321,9 +278,6 @@ def vote_nik_character_level(
                 voted_chars[idx] = max(char_weights.keys(), key=lambda k: char_weights[k])
             
         voted_nik = "".join(voted_chars)
-
-        if tanggal_lahir:
-            voted_nik = sync_nik_with_birthdate(voted_nik, tanggal_lahir, jenis_kelamin)
 
         if validate_nik_structure(voted_nik):
             return voted_nik

@@ -37,13 +37,7 @@ def score_ocr_text(raw_text: str, candidate_name: str = "", is_v1: bool = False)
     if nik_cand:
         has_nik = True
         if is_v1:
-            from app.ktp.extractor import KTPExtractor
-            ext_temp = KTPExtractor().extract(raw_text)
-            synced = sync_nik_with_birthdate(nik_cand, ext_temp.tanggal_lahir, ext_temp.jenis_kelamin)
-            if synced and validate_nik_structure(synced, raw_text):
-                has_valid_nik = True
-                score += 50
-            elif validate_nik_structure(nik_cand, raw_text):
+            if validate_nik_structure(nik_cand, raw_text):
                 has_valid_nik = True
                 score += 50
             else:
@@ -229,6 +223,29 @@ def run_candidates_tiered(image, is_v1: bool = False) -> tuple:
     all_tier_results.extend(results_t1)
 
     overall_best = _pick_overall_best(all_tier_results)
+
+    # Check if competing valid NIK candidates exist across distinct preprocessing families
+    nik_family_map = {}
+    from app.ktp.extractor import KTPExtractor
+    extractor_check = KTPExtractor()
+    for r in results_t1:
+        r_raw = r.get("raw_text", "")
+        if r_raw and r.get("score", 0) > 0:
+            p_res = extractor_check.extract(r_raw)
+            c_nik = getattr(p_res, "nik", None)
+            if c_nik and str(c_nik).strip():
+                c_n = r.get("name", "").lower()
+                fam = "pure_grayscale" if "pure grayscale" in c_n else ("blue_channel_clahe" if "blue channel" in c_n else ("v_channel_clahe" if "v-channel" in c_n else ("soft_unsharp_mask" if "unsharp" in c_n else r.get("name"))))
+                nik_family_map[fam] = str(c_nik).strip()
+
+    has_competing_nik_families = len(set(nik_family_map.values())) > 1
+
+    if has_competing_nik_families:
+        logger.info(
+            f"EARLY EXIT SUPPRESSED AT TIER 1: Competing valid NIK candidates detected across preprocessing families "
+            f"({nik_family_map}). Proceeding to multi-family consensus."
+        )
+        exit_tier1 = False
 
     if exit_tier1 and overall_best and (overall_best.get("matched_primary", 0) >= 2 or overall_best.get("parsed_count", 0) >= 2):
         logger.info(

@@ -162,11 +162,29 @@ def _vote_field(
             vote_originals[norm_key] = mobile_value.strip()
             vote_max_conf[norm_key] = mob_conf
 
-    # --- 2. Kumpulkan Suara Tesseract dengan Sanity Gate ---
+    # --- 2. Kumpulkan Suara Tesseract (Deduplikasi per Preprocessing Family) ---
+    family_groups = {}
     for entry in tesseract_entries:
+        val = entry.get("value")
+        if not val or not val.strip():
+            continue
+        is_cand_sane, _ = _sanity_check_free_text(field, val)
+        if not is_cand_sane:
+            continue
+        c_name = entry.get("candidate_name", "tesseract")
+        c_lower = c_name.lower()
+        fam_id = "pure_grayscale" if "pure grayscale" in c_lower else ("blue_channel_clahe" if "blue channel" in c_lower else ("v_channel_clahe" if "v-channel" in c_lower else ("soft_unsharp_mask" if "unsharp" in c_lower else c_name)))
+        conf = float(entry.get("confidence", 0.0))
+        if fam_id not in family_groups or conf > family_groups[fam_id].get("confidence", 0.0):
+            family_groups[fam_id] = entry
+
+    deduped_tesseract_entries = list(family_groups.values())
+
+    for entry in deduped_tesseract_entries:
         val = entry.get("value")
         conf = float(entry.get("confidence", 0.0))
         cand_name = entry.get("candidate_name", "tesseract")
+        cand_name_lower = cand_name.lower()
         if val and val.strip():
             is_cand_sane, _ = _sanity_check_free_text(field, val)
             if not is_cand_sane:
@@ -175,11 +193,12 @@ def _vote_field(
             norm_key = _normalize_for_match(val, field)
             if norm_key:
                 voter_conf = min(100.0, max(0.0, conf))
-                cand_weight = 1.5 if ("tier1" in cand_name or "psm6" in cand_name or "best" in cand_name) else 1.0
+                effective_conf = min(100.0, conf) if conf > 100.0 else max(0.0, conf)
+                cand_weight = 1.5 if ("tier1" in cand_name_lower or "psm" in cand_name_lower or "best" in cand_name_lower) else 1.0
                 if field == "nama" and " " in norm_key and len(norm_key.split()) >= 2:
                     cand_weight *= 1.5
 
-                vote_scores[norm_key] += conf * cand_weight
+                vote_scores[norm_key] += effective_conf * cand_weight
                 vote_voter_scores[norm_key].append(voter_conf)
                 vote_sources[norm_key].append(f"tesseract:{cand_name}")
                 if norm_key not in vote_originals or conf > vote_max_conf.get(norm_key, -1.0):

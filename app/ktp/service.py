@@ -51,12 +51,11 @@ def process_ktp_image(image_bytes: bytes) -> tuple:
     extractor = KTPExtractor()
     parsed_data = extractor.extract(best_raw_text)
 
-    # 1. Sync NIK dengan Tanggal Lahir (DOB Shield / Ground-Truth)
+    # 1. NIK-DOB Read-Only Consistency Check
     if parsed_data.nik and parsed_data.tanggal_lahir:
-        from app.ktp.extractor.validators import sync_nik_with_birthdate
-        synced_nik = sync_nik_with_birthdate(parsed_data.nik, parsed_data.tanggal_lahir, parsed_data.jenis_kelamin)
-        if synced_nik and len(synced_nik) == 16:
-            parsed_data.nik = synced_nik
+        from app.ktp.extractor.validators import is_nik_consistent_with_birthdate
+        is_consistent = is_nik_consistent_with_birthdate(parsed_data.nik, parsed_data.tanggal_lahir, parsed_data.jenis_kelamin)
+        logger.info(f"[SERVICE] NIK-DOB Consistency Check: {is_consistent} (NIK: {parsed_data.nik})")
 
     # 2. Multi-Candidate NIK Voting (Character-Level Consensus)
     if all_tier_results and parsed_data.nik and len(parsed_data.nik) == 16:
