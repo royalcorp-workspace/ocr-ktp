@@ -25,10 +25,10 @@ async def lifespan(app: FastAPI):
     try:
         from app.ktp.v2.paddle_engine import PaddleEngineV2
         engine = PaddleEngineV2()
-        engine.warmup()
-        logger.info("PaddleOCR V2 Engine berhasil di-warmup pada startup.")
+        elapsed = engine.warmup()
+        logger.info(f"PaddleOCR V2 Engine berhasil di-warmup pada startup dalam {elapsed:.2f} detik.")
     except Exception as e:
-        logger.warning(f"Gagal melakukan warmup PaddleOCR V2 Engine: {e}")
+        logger.error(f"Gagal melakukan warmup PaddleOCR V2 Engine: {e}", exc_info=True)
 
     yield
     logger.info("Menghentikan microservice ocr-ktp")

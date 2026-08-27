@@ -50,24 +50,23 @@ class PaddleEngineV2:
         
         # High-performance CPU configuration:
         # - enable_mkldnn=False to prevent OneDNN memory leaks (#17955)
-        # - use_textline_orientation=False & use_angle_cls=False to eliminate extra 25x orientation classification passes
+        # - use_textline_orientation=False to eliminate extra orientation classification passes
         # - det_limit_side_len=960 for fast DBNet box detection
         self.ocr = PaddleOCR(
             use_textline_orientation=False,
-            use_angle_cls=False,
             lang='en',
             enable_mkldnn=False,
             det_limit_side_len=960,
             det_db_thresh=0.3
         )
 
-    def warmup(self):
+    def warmup(self) -> float:
         """Pre-loads models and warms up C++ execution graph during app startup."""
-        try:
-            dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
-            self.ocr.ocr(dummy_img)
-        except Exception:
-            pass
+        import time
+        t0 = time.time()
+        dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+        self.ocr.ocr(dummy_img)
+        return time.time() - t0
 
     def extract_text_boxes(self, img_bytes: bytes) -> List[PaddleTextBox]:
         """
