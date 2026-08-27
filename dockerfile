@@ -5,12 +5,12 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HOST=0.0.0.0 \
     PORT=8011 \
-    # Threading control: prevent nested parallelism from Tesseract/NumPy/BLAS
-    OMP_THREAD_LIMIT=1 \
-    OMP_NUM_THREADS=1 \
-    OPENBLAS_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1 \
-    NUMEXPR_NUM_THREADS=1 \
+    # Threading control: set to match allocated container CPU cores
+    OMP_THREAD_LIMIT=4 \
+    OMP_NUM_THREADS=4 \
+    OPENBLAS_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    NUMEXPR_NUM_THREADS=4 \
     OMP_WAIT_POLICY=PASSIVE
  
 WORKDIR /app
