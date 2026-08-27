@@ -57,7 +57,11 @@ def validate_image_bytes(content: bytes, max_file_size: int = MAX_FILE_SIZE_BYTE
         )
 
     # 1. Header Check (Magic Bytes)
-    has_valid_header = is_valid_image_header(content)
+    if not is_valid_image_header(content):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Header biner file tidak valid. Harap unggah gambar JPEG, PNG, WebP, atau BMP yang valid."
+        )
 
     # 2. Deep Decoding Check via OpenCV
     img = None

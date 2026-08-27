@@ -4,7 +4,8 @@ from app.ktp.v2.paddle_engine import PaddleTextBox
 from app.ktp.v2.field_cleaners import (
     clean_text, clean_nik, clean_date, clean_gender,
     clean_blood_type, clean_marital_status, clean_citizenship,
-    clean_rt_rw, tokenize_pekerjaan, normalize_regional, tokenize_compound_name
+    clean_rt_rw, tokenize_pekerjaan, normalize_regional, tokenize_compound_name,
+    tokenize_name, tokenize_address
 )
 
 # Label Anchor Matrix Patterns with OCR Typo Tolerance
@@ -255,6 +256,8 @@ class SpatialParserV2:
                 if val_str:
                     if label_key == "nik":
                         c_val = clean_nik(val_str)
+                    elif label_key == "nama":
+                        c_val = tokenize_name(val_str)
                     elif label_key == "rt_rw":
                         c_val = clean_rt_rw(val_str)
                     elif label_key == "agama":
@@ -309,7 +312,7 @@ class SpatialParserV2:
                                 extra_conf_sum += sum(b.confidence for b in non_sig_boxes) / len(non_sig_boxes)
                                 extra_count += 1
                         full_alamat = " ".join(extra_parts)
-                        c_val = clean_text(full_alamat)
+                        c_val = tokenize_address(full_alamat)
                         avg_conf = extra_conf_sum / extra_count
                     else:
                         c_val = clean_text(val_str)
@@ -390,7 +393,7 @@ class SpatialParserV2:
 
                 # Name fallback (all uppercase text before birth place and after NIK)
                 if not extracted_raw["nama"]["val"] and not is_label_text(txt) and len(txt) > 3 and not re.search(r'\d', txt):
-                    extracted_raw["nama"] = {"val": clean_text(txt), "conf": round(b.confidence, 1)}
+                    extracted_raw["nama"] = {"val": tokenize_name(txt), "conf": round(b.confidence, 1)}
 
         # Layer 5: Pattern-Based Field Guesser (for Label-Less / Cropped Cards)
         self._layer5_pattern_guesser(text_boxes, extracted_raw, h_max, w_max)
@@ -464,8 +467,13 @@ class SpatialParserV2:
                         "PEKERJAAN", "KEWARGANEGARAAN", "BERLAKU", "HINGGA", "ALAMAT", "DESA",
                         "KELURAHAN", "KECAMATAN", "NIK", "NAMA"
                     }
-                    if txt not in noise_terms:
-                        kelurahan_candidates.append(b)
+                    if txt not in noise_terms and txt != extracted_raw["nama"]["val"]:
+                        # Cek apakah txt merupakan nama orang (seluruh kata terdaftar di name lexicon)
+                        from app.ktp.v2.field_cleaners import _V2_NAME_LEXICON
+                        words = txt.split()
+                        is_person_name = len(words) > 0 and all(w in _V2_NAME_LEXICON for w in words)
+                        if not is_person_name:
+                            kelurahan_candidates.append(b)
 
         # Disambiguate kelurahan vs kecamatan by Y-position ordering
         if kelurahan_candidates:

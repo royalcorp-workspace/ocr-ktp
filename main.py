@@ -36,22 +36,30 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
+allowed_origins = [orig.strip() for orig in allowed_origins_env.split(",") if orig.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=True if allowed_origins != ["*"] else False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
 
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
+async def security_headers_middleware(request: Request, call_next):
     req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     token = request_id_var.set(req_id)
     try:
         response: Response = await call_next(request)
         response.headers["X-Request-ID"] = req_id
+        # HTTP Security Headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
     finally:
         request_id_var.reset(token)
@@ -64,7 +72,8 @@ app.include_router(v2_routes.router)
 
 
 @app.get("/health", tags=["health"])
-async def health_check():
+@limiter.limit("60/minute")
+async def health_check(request: Request):
     return {
         "status": "healthy",
         "service": "ocr-ktp",
