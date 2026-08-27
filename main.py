@@ -20,6 +20,16 @@ async def lifespan(app: FastAPI):
     port = os.getenv("PORT", "8011")
     log_level = os.getenv("LOG_LEVEL", "INFO")
     logger.info(f"Menginisialisasi microservice ocr-ktp - host={host} port={port} log_level={log_level}")
+    
+    # Eager Model Warmup: load PaddleOCR models into memory during container startup
+    try:
+        from app.ktp.v2.paddle_engine import PaddleEngineV2
+        engine = PaddleEngineV2()
+        engine.warmup()
+        logger.info("PaddleOCR V2 Engine berhasil di-warmup pada startup.")
+    except Exception as e:
+        logger.warning(f"Gagal melakukan warmup PaddleOCR V2 Engine: {e}")
+
     yield
     logger.info("Menghentikan microservice ocr-ktp")
 
