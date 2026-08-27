@@ -5,12 +5,12 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HOST=0.0.0.0 \
     PORT=8011 \
-    # Threading control: set to match allocated container CPU cores
-    OMP_THREAD_LIMIT=4 \
-    OMP_NUM_THREADS=4 \
-    OPENBLAS_NUM_THREADS=4 \
-    MKL_NUM_THREADS=4 \
-    NUMEXPR_NUM_THREADS=4 \
+    # Threading control: set to 2 threads to prevent CPU thrashing under concurrency
+    OMP_THREAD_LIMIT=2 \
+    OMP_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    NUMEXPR_NUM_THREADS=2 \
     OMP_WAIT_POLICY=PASSIVE
  
 WORKDIR /app

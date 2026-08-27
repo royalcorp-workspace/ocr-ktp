@@ -46,25 +46,17 @@ class PaddleEngineV2:
             raise RuntimeError("PaddleOCR is not installed. Please install paddleocr and paddlepaddle.")
         import os
         os.environ["FLAGS_enable_pir_api"] = "0"
-        os.environ["FLAGS_use_mkldnn"] = "1"
+        os.environ["FLAGS_use_mkldnn"] = "0"
         
-        # Initialize PaddleOCR with MKL-DNN acceleration and optimized detection limits
-        try:
-            self.ocr = PaddleOCR(
-                use_textline_orientation=True,
-                lang='en',
-                enable_mkldnn=True,
-                det_limit_side_len=1280,
-                det_db_thresh=0.3
-            )
-        except Exception:
-            self.ocr = PaddleOCR(
-                use_textline_orientation=True,
-                lang='en',
-                enable_mkldnn=False,
-                det_limit_side_len=1280,
-                det_db_thresh=0.3
-            )
+        # Disable MKL-DNN to prevent OneDNN dynamic workspace memory leaks (GitHub PaddleOCR #17955).
+        # Performance optimization is achieved safely via 1280px max-side image downscaling.
+        self.ocr = PaddleOCR(
+            use_textline_orientation=True,
+            lang='en',
+            enable_mkldnn=False,
+            det_limit_side_len=1280,
+            det_db_thresh=0.3
+        )
 
     def extract_text_boxes(self, img_bytes: bytes) -> List[PaddleTextBox]:
         """

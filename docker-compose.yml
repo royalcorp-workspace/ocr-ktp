@@ -13,11 +13,11 @@ services:
     env_file:
       - .env
     environment:
-      - OMP_THREAD_LIMIT=4
-      - OMP_NUM_THREADS=4
-      - OPENBLAS_NUM_THREADS=4
-      - MKL_NUM_THREADS=4
-      - NUMEXPR_NUM_THREADS=4
+      - OMP_THREAD_LIMIT=2
+      - OMP_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - NUMEXPR_NUM_THREADS=2
       - OMP_WAIT_POLICY=PASSIVE
     restart: unless-stopped
     deploy:
