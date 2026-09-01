@@ -25,11 +25,17 @@ LABEL_PATTERNS = {
         r'\bKE[IL1]AM[I1][NM]\b',
         r'\bJ[EO]N[I1]S\b'
     ],
-    "golongan_darah": [r'GOL\.?\s*DARAH', r'\bDARAH\b'],
-    "alamat": [r'\b(ALAMAT|ALAMA)\b'],
-    "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW)\b'],
-    "kelurahan_desa": [r'KEL\s*/?\s*DESA', r'\bDESA\b', r'\bKELURAHAN\b'],
-    "kecamatan": [r'\b(KECAMATAN|KECAM)\b'],
+    "golongan_darah": [r'GOL\.?\s*DARAH', r'\bDARAH\b', r'\bGOL\b'],
+    "alamat": [r'\b(ALAMAT|ALAMA|ALMT)\b'],
+    "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW|RI/RW|RT/RV|RT/PW)\b'],
+    "kelurahan_desa": [
+        r'KE[LV1I/|]\s*[/.\s]?\s*DESA',
+        r'\bKE[LV]DESA\b',
+        r'KEL\s*/?\s*DESA',
+        r'\bDESA\b',
+        r'\bKELURAHAN\b'
+    ],
+    "kecamatan": [r'\b(KECAMATAN|KECAM|KEC)\b'],
     "agama": [r'\bAGAMA\b'],
     "status_perkawinan": [
         r'STATUS\s+PERKAWINA[NR]',
@@ -537,10 +543,14 @@ class SpatialParserV3:
                         "PEKERJAAN", "KEWARGANEGARAAN", "BERLAKU", "HINGGA", "ALAMAT", "DESA",
                         "KELURAHAN", "KECAMATAN", "NIK", "NAMA"
                     }
-                    is_label_noise = bool(re.search(r'\b(J[EO]N[I1]S|KE[IL1]AM[I1][NM]|GOL|DARAH|AGAMA|STATU|PERKAW|PEKERJ|WARGA|BERLAKU|HINGGA|ALAMAT|PROV|KABUP)\b', txt))
+                    is_label_noise = bool(
+                        re.search(r'\b(J[EO]N[I1]S|KE[IL1]AM[I1][NM]|GOL|DARAH|AGAMA|STATU|PERKAW|PEKERJ|WARGA|BERLAKU|HINGGA|ALAMAT|PROV|KABUP|KE[LV]DESA|DESA|KECAM)\b', txt)
+                        or is_label_text(txt)
+                    )
                     is_gender_noise = bool(clean_gender(txt) or re.search(r'LAK|PEREMP|WANITA|PRIA', txt.upper()))
+                    is_left_label_column = (b.x_min < (0.22 * w_max) and len(txt) <= 10)
 
-                    if not is_label_noise and not is_gender_noise and txt not in noise_terms:
+                    if not is_label_noise and not is_gender_noise and not is_left_label_column and txt not in noise_terms:
                         tokenized_txt = tokenize_name(txt) or txt
                         nama_val = extracted_raw["nama"].get("val") or ""
                         is_same_as_nama = (txt == nama_val or tokenized_txt == nama_val)
