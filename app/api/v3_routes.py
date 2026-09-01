@@ -1,4 +1,6 @@
+import os
 import json
+import asyncio
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status, Request
 from starlette.concurrency import run_in_threadpool
 from app.core.security import verify_api_key, limiter
@@ -10,15 +12,21 @@ from app.ktp.v3.service_v3 import process_ktp_image_v3, run_consensus_ocr_v3
 
 router = APIRouter(prefix="/ktp/v3", tags=["ktp-v3-onnx"])
 
+OCR_TIMEOUT_SECONDS = float(os.getenv("OCR_TIMEOUT_SECONDS", "8.0"))
+UNREADABLE_IMAGE_DETAIL = (
+    "Kualitas gambar KTP kurang jelas, buram, atau pencahayaan kurang optimal sehingga tidak dapat diproses. "
+    "Silakan foto ulang KTP Anda dengan posisi tegak lurus dan pencahayaan yang cukup."
+)
+
+
 @router.post("/extract", response_model=KTPOcrResponseV2, dependencies=[Depends(verify_api_key)])
 @limiter.limit("60/minute")
 async def extract_ktp_v3(request: Request, file: UploadFile = File(...)):
     """
-    Endpoint KTP OCR V3 (ONNX Runtime Standalone).
-    Ekstraksi 15 Field Dukcapil menggunakan PP-OCRv4 ONNX Runtime berkecepatan tinggi.
+    Endpoint KTP OCR (Ekstraksi 15 Field Dukcapil).
     """
     req_id = request_id_var.get()
-    logger.info(f"[V3 ONNX] KTP Extract request diterima - request_id={req_id} filename={file.filename}")
+    logger.info(f"[OCR Extract] Request diterima - request_id={req_id} filename={file.filename}")
 
     try:
         content = await file.read()
@@ -31,14 +39,26 @@ async def extract_ktp_v3(request: Request, file: UploadFile = File(...)):
     validate_image_bytes(content)
 
     try:
-        result = await run_in_threadpool(process_ktp_image_v3, content)
+        result = await asyncio.wait_for(
+            run_in_threadpool(process_ktp_image_v3, content),
+            timeout=OCR_TIMEOUT_SECONDS
+        )
         return result
+    except asyncio.TimeoutError:
+        logger.warning(f"[OCR Extract Timeout] Ekstraksi melebihi batas waktu ({OCR_TIMEOUT_SECONDS}s) - request_id={req_id}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=UNREADABLE_IMAGE_DETAIL
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[V3 ONNX] Extract Error - request_id={req_id} error={str(e)}")
+        logger.error(f"[OCR Extract Error] request_id={req_id} error={str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Gagal memproses OCR KTP V3 ONNX: {str(e)}"
+            detail=f"Gagal memproses OCR KTP: {str(e)}"
         )
+
 
 @router.post("/validate", response_model=ConsensusResponseV2, dependencies=[Depends(verify_api_key)])
 @limiter.limit("60/minute")
@@ -48,11 +68,10 @@ async def validate_ktp_v3(
     mobile_data: str = Form(...),
 ):
     """
-    Endpoint Consensus Validator V3 (ONNX Runtime Standalone).
-    Membandingkan data Mobile dengan ONNX OCR V3 (source: 'OCR' atau 'MOBILE').
+    Endpoint Consensus Validator (Membandingkan data Mobile dengan OCR).
     """
     req_id = request_id_var.get()
-    logger.info(f"[V3 ONNX] KTP Validate request diterima - request_id={req_id} filename={file.filename}")
+    logger.info(f"[OCR Validate] Request diterima - request_id={req_id} filename={file.filename}")
 
     try:
         if isinstance(mobile_data, str):
@@ -76,11 +95,22 @@ async def validate_ktp_v3(
     validate_image_bytes(content)
 
     try:
-        result = await run_in_threadpool(run_consensus_ocr_v3, content, mob_dict)
+        result = await asyncio.wait_for(
+            run_in_threadpool(run_consensus_ocr_v3, content, mob_dict),
+            timeout=OCR_TIMEOUT_SECONDS
+        )
         return result
+    except asyncio.TimeoutError:
+        logger.warning(f"[OCR Validate Timeout] Validasi melebihi batas waktu ({OCR_TIMEOUT_SECONDS}s) - request_id={req_id}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=UNREADABLE_IMAGE_DETAIL
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[V3 ONNX] Validate Error - request_id={req_id} error={str(e)}")
+        logger.error(f"[OCR Validate Error] request_id={req_id} error={str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Gagal memvalidasi KTP V3 ONNX: {str(e)}"
+            detail=f"Gagal memvalidasi KTP: {str(e)}"
         )
