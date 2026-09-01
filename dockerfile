@@ -41,7 +41,8 @@ RUN python -c "from paddleocr import PaddleOCR; import numpy as np, cv2; ocr = P
 COPY . .
 
 # Export downloaded PaddleOCR model to ONNX for V3 engine
-RUN python app/ktp/v3/export_onnx.py && \
+RUN mkdir -p /app/models_onnx && \
+    python app/ktp/v3/export_onnx.py && \
     curl -sL -o /app/models_onnx/en_dict.txt "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/en_dict.txt" && \
     python -c "import os; from rapidocr_onnxruntime import RapidOCR; import numpy as np, cv2; engine = RapidOCR(rec_model_path='/app/models_onnx/en_PP-OCRv4_rec.onnx', rec_keys_path='/app/models_onnx/en_dict.txt', text_score=0.5) if os.path.exists('/app/models_onnx/en_PP-OCRv4_rec.onnx') else RapidOCR(text_score=0.5); img = np.ones((100, 300, 3), dtype=np.uint8) * 255; cv2.putText(img, 'WARMUP ONNX', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2); engine(img, use_cls=False)"
 
