@@ -94,6 +94,10 @@ def clean_rt_rw(raw_val: Optional[str]) -> Optional[str]:
     if not s:
         return None
     s = re.sub(r'\s*/\s*', '/', s)
+    # Fix OCR misread 6 -> 0 in 3-digit RT/RW (e.g. 002/606 -> 002/006, 601/017 -> 001/017)
+    # OCR on low-contrast cards frequently confuses leading '60' for '00'
+    s = re.sub(r'\b60(\d)\b', r'00\1', s)
+    s = re.sub(r'/60(\d)\b', r'/00\1', s)
     return s if s else None
 
 
@@ -371,6 +375,10 @@ def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
         return None
     s = str(raw_val).upper().strip()
 
+    # Pre-clean common OCR character misreads in Indonesian occupation terms
+    s = s.replace("HARLAN", "HARIAN").replace("PELAIAR", "PELAJAR").replace("SWA5TA", "SWASTA")
+    s = s.replace("LEPA5", "LEPAS").replace("BURUHHARLAN", "BURUH HARIAN")
+
     def _greedy_match(tok: str) -> str:
         """Greedy longest-match tokenizer untuk satu token tunggal tanpa spasi."""
         if '/' in tok or len(tok) <= 4:
@@ -415,12 +423,15 @@ def normalize_regional(raw_val: Optional[str]) -> Optional[str]:
     """Normalisasi nama wilayah Indonesia:
     - Q → C (OCR sering salah baca C sebagai Q): RANQAEKEK → RANCAEKEK
     - X → K (OCR sering salah baca K sebagai X pada gambar kualitas rendah): XELAMIN → KELAMIN
+    - Truncated city names: BANDUN -> BANDUNG
     """
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
     s = s.replace('Q', 'C')
     s = s.replace('X', 'K')  # Nama wilayah Indonesia tidak menggunakan huruf X asli
+    if re.search(r'\bBANDUN$', s):
+        s = s + 'G'
     s = re.sub(r'\s+', ' ', s).strip()
     return s if s else None
 

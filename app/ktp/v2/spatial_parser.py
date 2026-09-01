@@ -19,7 +19,12 @@ LABEL_PATTERNS = {
         r'\bLAHIR\b',
         r'\bTEMPAT\b'
     ],
-    "jenis_kelamin": [r'JENIS\s+KELAMI[NM]', r'\bKELAMI[NM]\b'],
+    "jenis_kelamin": [
+        r'J[EO]N[I1]S\s+KE[IL1]AM[I1][NM]',
+        r'JENIS\s+KELAMI[NM]',
+        r'\bKE[IL1]AM[I1][NM]\b',
+        r'\bJ[EO]N[I1]S\b'
+    ],
     "golongan_darah": [r'GOL\.?\s*DARAH', r'\bDARAH\b'],
     "alamat": [r'\b(ALAMAT|ALAMA)\b'],
     "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW)\b'],
@@ -472,9 +477,11 @@ class SpatialParserV2:
                         "BELUM KAWIN", "WNI", "WNA", "SEUMUR HIDUP", "LAHIR", "TEMPAT",
                         "GOL", "DARAH", "JENIS", "KELAMIN", "AGAMA", "STATUS", "PERKAWINAN",
                         "PEKERJAAN", "KEWARGANEGARAAN", "BERLAKU", "HINGGA", "ALAMAT", "DESA",
-                        "KELURAHAN", "KECAMATAN", "NIK", "NAMA"
+                        "KELURAHAN", "KECAMATAN", "NIK", "NAMA",
+                        "JONIS", "KEIAMIN", "JONIS KEIAMIN", "JENIS KELAMIN"
                     }
-                    if txt not in noise_terms:
+                    is_label_noise = bool(re.search(r'\b(J[EO]N[I1]S|KE[IL1]AM[I1][NM]|GOL|DARAH|AGAMA|STATU|PERKAW|PEKERJ|WARGA|BERLAKU|HINGGA|ALAMAT|PROV|KABUP)\b', txt))
+                    if not is_label_noise and txt not in noise_terms:
                         # Guard: bandingkan raw txt DAN tokenized version terhadap nilai nama
                         # Menangkap kasus DEDENKUSMANI (raw) vs DEDEN KUSMANI (nama tersimpan)
                         from app.ktp.v2.field_cleaners import _V2_NAME_LEXICON, tokenize_name
