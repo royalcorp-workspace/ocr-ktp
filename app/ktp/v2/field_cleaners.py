@@ -365,33 +365,47 @@ _PEKERJAAN_VOCAB: List[str] = sorted([
 
 def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
     """Memecah teks pekerjaan yang digabung tanpa spasi (misal BURUHHARIANLEPAS)
-    menggunakan greedy longest-match terhadap kamus kata pekerjaan."""
+    menggunakan greedy longest-match terhadap kamus kata pekerjaan.
+    Juga menangani merge parsial: BURUH HARIANLEPAS → BURUH HARIAN LEPAS."""
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
-    # Jika sudah mengandung spasi/slash, kembalikan langsung
-    if ' ' in s or '/' in s:
-        return s
-    # Greedy longest-match terhadap _PEKERJAAN_VOCAB
-    result_tokens: List[str] = []
-    remaining = s
-    max_iter = 30
-    iteration = 0
-    while remaining and iteration < max_iter:
-        iteration += 1
-        matched = False
-        for vocab_word in _PEKERJAAN_VOCAB:
-            vw_no_space = vocab_word.replace(' ', '').replace('/', '')
-            if remaining.startswith(vw_no_space):
-                result_tokens.append(vocab_word)
-                remaining = remaining[len(vw_no_space):]
-                matched = True
+
+    def _greedy_match(tok: str) -> str:
+        """Greedy longest-match tokenizer untuk satu token tunggal tanpa spasi."""
+        if '/' in tok or len(tok) <= 4:
+            return tok
+        result: List[str] = []
+        remaining = tok
+        max_iter = 30
+        iteration = 0
+        while remaining and iteration < max_iter:
+            iteration += 1
+            matched = False
+            for vocab_word in _PEKERJAAN_VOCAB:
+                vw_no_space = vocab_word.replace(' ', '').replace('/', '')
+                if remaining.startswith(vw_no_space):
+                    result.append(vocab_word)
+                    remaining = remaining[len(vw_no_space):]
+                    matched = True
+                    break
+            if not matched:
+                result.append(remaining)
                 break
-        if not matched:
-            # Tidak ada match — pertahankan sisa string as-is
-            result_tokens.append(remaining)
-            break
-    result = ' '.join(result_tokens).strip()
+        return ' '.join(result).strip() if result else tok
+
+    if '/' in s:
+        return s
+
+    if ' ' in s:
+        # Proses per-token: tangkap kasus BURUH HARIANLEPAS → BURUH HARIAN LEPAS
+        parts = s.split()
+        result_parts = [_greedy_match(p) for p in parts]
+        result = ' '.join(result_parts)
+        return re.sub(r'\s+', ' ', result).strip()
+
+    # Tidak ada spasi — greedy match seluruh string
+    result = _greedy_match(s)
     result = re.sub(r'\s+', ' ', result)
     return result if result else s
 
@@ -399,13 +413,14 @@ def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
 # ─── Regional Name Normalizer ────────────────────────────────────────────────────
 def normalize_regional(raw_val: Optional[str]) -> Optional[str]:
     """Normalisasi nama wilayah Indonesia:
-    - Q → C (nama wilayah RI tidak mengandung Q asli, OCR sering salah baca C sebagai Q)
-    Contoh: RANQAEKEK → RANCAEKEK
+    - Q → C (OCR sering salah baca C sebagai Q): RANQAEKEK → RANCAEKEK
+    - X → K (OCR sering salah baca K sebagai X pada gambar kualitas rendah): XELAMIN → KELAMIN
     """
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
     s = s.replace('Q', 'C')
+    s = s.replace('X', 'K')  # Nama wilayah Indonesia tidak menggunakan huruf X asli
     s = re.sub(r'\s+', ' ', s).strip()
     return s if s else None
 

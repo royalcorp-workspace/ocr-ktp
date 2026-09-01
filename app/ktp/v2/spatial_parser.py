@@ -278,16 +278,23 @@ class SpatialParserV2:
                         if raw_clean in {"HINGGA", "BERLAKU HINGGA", "BERLAKU", "NORLAKU HINGGA"}:
                             raw_clean = None
                             for right_b in line[idx + 1:]:
-                                if "SEUMUR" in right_b.text.upper():
+                                # Tangkap SEUMUR dan SEUNUR (typo M→N pada gambar kualitas rendah)
+                                if re.search(r'SEU[MN]UR', right_b.text.upper()):
                                     raw_clean = "SEUMUR HIDUP"
                                     break
                                 cd = clean_date(right_b.text)
                                 if cd:
                                     raw_clean = cd
                                     break
-                        # Normalisasi SEUMURHIDUP → SEUMUR HIDUP
-                        if raw_clean and "SEUMUR" in raw_clean and " " not in raw_clean:
-                            raw_clean = "SEUMUR HIDUP"
+                        # Normalisasi SEUMUR/SEUNUR variants + strip trailing noise tokens
+                        if raw_clean:
+                            if re.search(r'SEU[MN]UR', raw_clean):
+                                raw_clean = "SEUMUR HIDUP"
+                            else:
+                                # Jika ada tanggal valid, ambil hanya tanggal (buang noise trailing)
+                                date_m = re.search(r'(\d{2}[-./]\d{2}[-./]\d{4})', raw_clean)
+                                if date_m:
+                                    raw_clean = clean_date(date_m.group(1))
                         c_val = raw_clean
                     elif label_key == "alamat":
                         # Collect multi-line continuation: ambil baris berikutnya
@@ -467,13 +474,18 @@ class SpatialParserV2:
                         "PEKERJAAN", "KEWARGANEGARAAN", "BERLAKU", "HINGGA", "ALAMAT", "DESA",
                         "KELURAHAN", "KECAMATAN", "NIK", "NAMA"
                     }
-                    if txt not in noise_terms and txt != extracted_raw["nama"]["val"]:
-                        # Cek apakah txt merupakan nama orang (seluruh kata terdaftar di name lexicon)
-                        from app.ktp.v2.field_cleaners import _V2_NAME_LEXICON
-                        words = txt.split()
-                        is_person_name = len(words) > 0 and all(w in _V2_NAME_LEXICON for w in words)
-                        if not is_person_name:
-                            kelurahan_candidates.append(b)
+                    if txt not in noise_terms:
+                        # Guard: bandingkan raw txt DAN tokenized version terhadap nilai nama
+                        # Menangkap kasus DEDENKUSMANI (raw) vs DEDEN KUSMANI (nama tersimpan)
+                        from app.ktp.v2.field_cleaners import _V2_NAME_LEXICON, tokenize_name
+                        tokenized_txt = tokenize_name(txt) or txt
+                        nama_val = extracted_raw["nama"].get("val") or ""
+                        is_same_as_nama = (txt == nama_val or tokenized_txt == nama_val)
+                        if not is_same_as_nama:
+                            words = txt.split()
+                            is_person_name = len(words) > 0 and all(w in _V2_NAME_LEXICON for w in words)
+                            if not is_person_name:
+                                kelurahan_candidates.append(b)
 
         # Disambiguate kelurahan vs kecamatan by Y-position ordering
         if kelurahan_candidates:
