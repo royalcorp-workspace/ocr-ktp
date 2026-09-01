@@ -50,12 +50,28 @@ class ONNXEngineV3:
         custom_dict = "/app/models_onnx/en_dict.txt"
 
         if os.path.exists(custom_onnx_rec):
-            kwargs = {"rec_model_path": custom_onnx_rec, "text_score": 0.3}
+            kwargs = {"rec_model_path": custom_onnx_rec, "text_score": 0.5}
             if os.path.exists(custom_dict):
                 kwargs["rec_keys_path"] = custom_dict
             self.engine = RapidOCR(**kwargs)
         else:
-            self.engine = RapidOCR(text_score=0.3)
+            self.engine = RapidOCR(text_score=0.5)
+
+    @staticmethod
+    def _enhance_image(img_bgr: np.ndarray) -> np.ndarray:
+        """
+        Apply CLAHE contrast enhancement + unsharp masking to improve OCR accuracy
+        on low-quality KTP images (poor lighting, worn cards, blur).
+        """
+        lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        lab = cv2.merge([l, a, b])
+        enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        # Unsharp masking: sharpen edges without amplifying large noise regions
+        blur = cv2.GaussianBlur(enhanced, (0, 0), 3)
+        return cv2.addWeighted(enhanced, 1.5, blur, -0.5, 0)
 
     def warmup(self) -> float:
         """Pre-loads ONNX models and warms up C++ runtime graph during container startup."""
@@ -79,7 +95,10 @@ class ONNXEngineV3:
         img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
         t_decode = time.perf_counter()
 
-        # Step 2: Smart Image Downscaling for OCR Speed Optimization (aligned to multiple of 32 for DBNet ONNX)
+        # Step 2: CLAHE + Unsharp Masking — improves accuracy on low-quality/worn KTP images
+        img_bgr = self._enhance_image(img_bgr)
+
+        # Step 3: Proportional downscale to max 960px, then pad to grid-32 (no aspect ratio distortion)
         max_side = 960
         h, w = img_bgr.shape[:2]
         max_dim = max(h, w)
@@ -87,14 +106,17 @@ class ONNXEngineV3:
         scale_factor = 1.0
         if max_dim > max_side:
             scale_factor = max_side / float(max_dim)
-            new_w = max(32, int(round(w * scale_factor / 32.0) * 32))
-            new_h = max(32, int(round(h * scale_factor / 32.0) * 32))
+            new_w = max(1, int(w * scale_factor))
+            new_h = max(1, int(h * scale_factor))
             img_bgr = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
         else:
-            new_w = max(32, int(round(w / 32.0) * 32))
-            new_h = max(32, int(round(h / 32.0) * 32))
-            if new_w != w or new_h != h:
-                img_bgr = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            new_w, new_h = w, h
+
+        # Pad to multiple-of-32 using BORDER_REPLICATE to preserve edge context
+        pad_w = (32 - new_w % 32) % 32
+        pad_h = (32 - new_h % 32) % 32
+        if pad_w or pad_h:
+            img_bgr = cv2.copyMakeBorder(img_bgr, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE)
         t_resize = time.perf_counter()
 
         # Step 3: Execute ONNX Inference (Detection + Recognition)
