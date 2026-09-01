@@ -21,14 +21,22 @@ async def lifespan(app: FastAPI):
     log_level = os.getenv("LOG_LEVEL", "INFO")
     logger.info(f"Menginisialisasi microservice ocr-ktp - host={host} port={port} log_level={log_level}")
     
-    # Eager Model Warmup: load PaddleOCR models into memory during container startup
+    # Eager Model Warmup: load PaddleOCR V2 and ONNX V3 models into memory during container startup
     try:
         from app.ktp.v2.paddle_engine import PaddleEngineV2
-        engine = PaddleEngineV2()
-        elapsed = engine.warmup()
-        logger.info(f"PaddleOCR V2 Engine berhasil di-warmup pada startup dalam {elapsed:.2f} detik.")
+        engine_v2 = PaddleEngineV2()
+        elapsed_v2 = engine_v2.warmup()
+        logger.info(f"PaddleOCR V2 Engine berhasil di-warmup pada startup dalam {elapsed_v2:.2f} detik.")
     except Exception as e:
-        logger.error(f"Gagal melakukan warmup PaddleOCR V2 Engine: {e}", exc_info=True)
+        logger.warning(f"Warmup PaddleOCR V2 Engine dilewati / gagal: {e}")
+
+    try:
+        from app.ktp.v3.onnx_engine import ONNXEngineV3
+        engine_v3 = ONNXEngineV3()
+        elapsed_v3 = engine_v3.warmup()
+        logger.info(f"ONNX V3 Engine berhasil di-warmup pada startup dalam {elapsed_v3:.2f} detik.")
+    except Exception as e:
+        logger.warning(f"Warmup ONNX V3 Engine dilewati / gagal: {e}")
 
     yield
     logger.info("Menghentikan microservice ocr-ktp")
@@ -75,10 +83,11 @@ async def security_headers_middleware(request: Request, call_next):
         request_id_var.reset(token)
 
 
-from app.api import v1_routes, v2_routes
+from app.api import v1_routes, v2_routes, v3_routes
 app.include_router(ktp_routes.router)
 app.include_router(v1_routes.router)
 app.include_router(v2_routes.router)
+app.include_router(v3_routes.router)
 
 
 @app.get("/health", tags=["health"])
