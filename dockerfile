@@ -35,9 +35,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout=60 --retries=5 --root-user-action=ignore -r requirements.txt
 
-# Pre-download & warm up PaddleOCR V2 and ONNX V3 models during container build
+# Pre-download & warm up PaddleOCR V2 models, then export exact English model to ONNX for V3
 RUN python -c "from paddleocr import PaddleOCR; import numpy as np, cv2; ocr = PaddleOCR(use_textline_orientation=False, lang='en', enable_mkldnn=False, det_limit_side_len=960, rec_batch_num=6); img = np.ones((100, 300, 3), dtype=np.uint8) * 255; cv2.putText(img, 'WARMUP', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2); ocr.ocr(img)" && \
-    python -c "from rapidocr_onnxruntime import RapidOCR; import numpy as np, cv2; engine = RapidOCR(text_score=0.3); img = np.ones((100, 300, 3), dtype=np.uint8) * 255; cv2.putText(img, 'WARMUP ONNX', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2); engine(img, use_cls=False)"
+    mkdir -p /app/models_onnx && \
+    python -c "import os, glob, paddle2onnx; rec_dirs = glob.glob('/root/.paddleocr/whl/rec/en/*'); model_dir = rec_dirs[0] if rec_dirs else None; print('Converting model dir:', model_dir); paddle2onnx.command.c_paddle_to_onnx(model_file=os.path.join(model_dir, 'inference.pdmodel'), params_file=os.path.join(model_dir, 'inference.pdiparams'), save_file='/app/models_onnx/en_PP-OCRv4_rec.onnx', opset_version=11, enable_onnx_checker=True) if model_dir else None" && \
+    curl -sL -o /app/models_onnx/en_dict.txt "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/en_dict.txt" && \
+    python -c "import os; from rapidocr_onnxruntime import RapidOCR; import numpy as np, cv2; engine = RapidOCR(rec_model_path='/app/models_onnx/en_PP-OCRv4_rec.onnx', rec_keys_path='/app/models_onnx/en_dict.txt', text_score=0.3) if os.path.exists('/app/models_onnx/en_PP-OCRv4_rec.onnx') else RapidOCR(text_score=0.3); img = np.ones((100, 300, 3), dtype=np.uint8) * 255; cv2.putText(img, 'WARMUP ONNX', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2); engine(img, use_cls=False)"
 
 COPY . .
 

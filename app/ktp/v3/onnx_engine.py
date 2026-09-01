@@ -8,6 +8,16 @@ from PIL import Image
 
 try:
     from rapidocr_onnxruntime import RapidOCR
+    import onnxruntime as ort
+    from rapidocr_onnxruntime.utils.infer_engine import OrtInferSession
+
+    _orig_init_sess_opts = OrtInferSession._init_sess_opts
+    def _safe_init_sess_opts(config):
+        opt = _orig_init_sess_opts(config)
+        opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        opt.enable_cpu_mem_arena = False
+        return opt
+    OrtInferSession._init_sess_opts = staticmethod(_safe_init_sess_opts)
 except ImportError:
     RapidOCR = None
 
@@ -33,16 +43,25 @@ class ONNXEngineV3:
         if RapidOCR is None:
             raise RuntimeError("RapidOCR is not installed. Please install rapidocr_onnxruntime.")
 
-        # Initialize RapidOCR with PP-OCRv4 ONNX models
-        # - text_score=0.3 matches PaddleOCR det_db_thresh=0.3
-        # - use_cls=False avoids unnecessary orientation pass
-        self.engine = RapidOCR(text_score=0.3)
+        # Initialize RapidOCR
+        # Check if custom English PP-OCRv4 ONNX model exists in /app/models_onnx/
+        import os
+        custom_onnx_rec = "/app/models_onnx/en_PP-OCRv4_rec.onnx"
+        custom_dict = "/app/models_onnx/en_dict.txt"
+
+        if os.path.exists(custom_onnx_rec):
+            kwargs = {"rec_model_path": custom_onnx_rec, "text_score": 0.3}
+            if os.path.exists(custom_dict):
+                kwargs["rec_keys_path"] = custom_dict
+            self.engine = RapidOCR(**kwargs)
+        else:
+            self.engine = RapidOCR(text_score=0.3)
 
     def warmup(self) -> float:
         """Pre-loads ONNX models and warms up C++ runtime graph during container startup."""
         t0 = time.perf_counter()
-        dummy_img = np.ones((100, 300, 3), dtype=np.uint8) * 255
-        cv2.putText(dummy_img, "WARMUP KTP ONNX 123", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+        dummy_img = np.ones((128, 320, 3), dtype=np.uint8) * 255
+        cv2.putText(dummy_img, "WARMUP KTP ONNX 123", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
         self.engine(dummy_img, use_cls=False)
         return time.perf_counter() - t0
 
@@ -51,6 +70,7 @@ class ONNXEngineV3:
         Executes ONNX Runtime OCR on raw image bytes and returns structured text box list alongside timing metrics.
         Includes smart downscaling to max 960px for sub-second CPU OCR execution.
         """
+        import unicodedata
         t0 = time.perf_counter()
 
         # Step 1: Decode image bytes to numpy BGR image
@@ -59,7 +79,7 @@ class ONNXEngineV3:
         img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
         t_decode = time.perf_counter()
 
-        # Step 2: Smart Image Downscaling for OCR Speed Optimization
+        # Step 2: Smart Image Downscaling for OCR Speed Optimization (aligned to multiple of 32 for DBNet ONNX)
         max_side = 960
         h, w = img_bgr.shape[:2]
         max_dim = max(h, w)
@@ -67,9 +87,14 @@ class ONNXEngineV3:
         scale_factor = 1.0
         if max_dim > max_side:
             scale_factor = max_side / float(max_dim)
-            new_w = max(1, int(w * scale_factor))
-            new_h = max(1, int(h * scale_factor))
+            new_w = max(32, int(round(w * scale_factor / 32.0) * 32))
+            new_h = max(32, int(round(h * scale_factor / 32.0) * 32))
             img_bgr = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            new_w = max(32, int(round(w / 32.0) * 32))
+            new_h = max(32, int(round(h / 32.0) * 32))
+            if new_w != w or new_h != h:
+                img_bgr = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
         t_resize = time.perf_counter()
 
         # Step 3: Execute ONNX Inference (Detection + Recognition)
@@ -92,9 +117,9 @@ class ONNXEngineV3:
                     pts = pts / scale_factor
 
                 sc = float(score) * 100.0 if float(score) <= 1.0 else float(score)
-                # Strip null bytes and normalize text
-                clean_text = str(text).strip().replace("\x00", "")
-                text_boxes.append(PaddleTextBox(pts.tolist(), clean_text, sc))
+                # Normalize full-width Unicode characters (e.g. '：' -> ':', 'Ａ' -> 'A')
+                normalized_text = unicodedata.normalize('NFKC', str(text)).strip().replace("\x00", "")
+                text_boxes.append(PaddleTextBox(pts.tolist(), normalized_text, sc))
 
         t_unpack = time.perf_counter()
 

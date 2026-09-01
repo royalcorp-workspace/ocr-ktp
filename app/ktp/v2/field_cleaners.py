@@ -78,7 +78,8 @@ _V2_NAME_LEXICON = {
 def clean_text(raw_text: Optional[str]) -> Optional[str]:
     if not raw_text:
         return None
-    text = str(raw_text).upper().strip()
+    import unicodedata
+    text = unicodedata.normalize('NFKC', str(raw_text)).upper().strip()
     # Strip leading/trailing colon, dash, quotes, noise symbols
     text = re.sub(r'^[:\-–—"\':;\.>\s]+', '', text)
     text = re.sub(r'[:\-–—"\':;\.>\s]+$', '', text)
