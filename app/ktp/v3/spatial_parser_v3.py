@@ -1,5 +1,5 @@
 import re
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Set
 from app.ktp.v2.paddle_engine import PaddleTextBox
 from app.ktp.v3.field_cleaners_v3 import (
     clean_text, clean_nik, clean_date, clean_gender,
@@ -108,7 +108,7 @@ def group_boxes_into_lines(boxes: List[PaddleTextBox]) -> List[List[PaddleTextBo
 class SpatialParserV3:
     def parse_ktp(self, text_boxes: List[PaddleTextBox]) -> Dict[str, Dict[str, Any]]:
         """
-        Parses text boxes using 5-Layer Multi-Strategy Pipeline for V3.
+        Parses text boxes using 5-Layer Multi-Strategy Pipeline with Deterministic Spatial Slot Grid.
         """
         if not text_boxes:
             return {k: {"val": None, "conf": 0.0} for k in [
@@ -140,6 +140,11 @@ class SpatialParserV3:
             "berlaku_hingga": {"val": None, "conf": 0.0},
         }
 
+        # Track exact used bounding box IDs to guarantee zero cross-field duplication
+        used_box_ids: Set[int] = set()
+        # Track vertical anchors of key landmark fields
+        field_y_anchors: Dict[str, float] = {}
+
         def is_signature_zone(b: PaddleTextBox) -> bool:
             return b.x_min > (0.55 * w_max) and b.y_min > (0.55 * h_max)
 
@@ -147,6 +152,8 @@ class SpatialParserV3:
             line_str = " ".join(b.text for b in line)
             line_avg_y = sum(b.center_y for b in line) / len(line)
             if line_avg_y < (0.18 * h_max) and ("PROVINSI" in line_str.upper() or "KABUPATEN" in line_str.upper()):
+                for b in line:
+                    used_box_ids.add(id(b))
                 continue
 
             # 1. Compound Line: TEMPAT/TGL LAHIR
@@ -158,12 +165,15 @@ class SpatialParserV3:
                 if val_boxes:
                     val_str = " ".join(b.text for b in val_boxes)
                     avg_conf = sum(b.confidence for b in val_boxes) / len(val_boxes)
+                    for b in val_boxes:
+                        used_box_ids.add(id(b))
                 else:
                     for b in line:
                         inline_v = extract_inline_value(b.text, "tempat_tanggal_lahir")
                         if inline_v:
                             val_str = inline_v
                             avg_conf = b.confidence
+                            used_box_ids.add(id(b))
                             break
 
                 if val_str:
@@ -181,13 +191,14 @@ class SpatialParserV3:
                     c_city = normalize_regional(clean_text(city_part))
                     c_date = clean_date(date_part)
 
-                    # Spatial scan on line if date was in a separate box
+                    # Spatial scan on line if date was in a separate right-side box
                     if not c_date:
                         for b in line:
-                            if not is_signature_zone(b):
+                            if not is_signature_zone(b) and id(b) not in used_box_ids:
                                 cd = clean_date(b.text)
                                 if cd:
                                     c_date = cd
+                                    used_box_ids.add(id(b))
                                     break
 
                     if c_city:
@@ -207,6 +218,7 @@ class SpatialParserV3:
                         continue
                     if is_label_text(b.text) == "golongan_darah" or "GOL" in b.text.upper():
                         found_blood_label = True
+                        used_box_ids.add(id(b))
                         inline_b = extract_inline_value(b.text, "golongan_darah")
                         if inline_b:
                             c_b = clean_blood_type(inline_b)
@@ -214,6 +226,7 @@ class SpatialParserV3:
                                 extracted_raw["golongan_darah"] = {"val": c_b, "conf": round(b.confidence, 1)}
                         continue
                     if is_label_text(b.text) == "jenis_kelamin":
+                        used_box_ids.add(id(b))
                         inline_g = extract_inline_value(b.text, "jenis_kelamin")
                         if inline_g:
                             c_g = clean_gender(inline_g)
@@ -232,6 +245,8 @@ class SpatialParserV3:
                     c_g = clean_gender(g_str)
                     if c_g:
                         extracted_raw["jenis_kelamin"] = {"val": c_g, "conf": round(g_conf, 1)}
+                    for b in gender_boxes:
+                        used_box_ids.add(id(b))
 
                 if blood_boxes and not extracted_raw["golongan_darah"]["val"]:
                     b_str = " ".join(b.text for b in blood_boxes)
@@ -239,6 +254,8 @@ class SpatialParserV3:
                     c_b = clean_blood_type(b_str)
                     if c_b:
                         extracted_raw["golongan_darah"] = {"val": c_b, "conf": round(b_conf, 1)}
+                    for b in blood_boxes:
+                        used_box_ids.add(id(b))
                 continue
 
             # 3. Standard Single-Field Labels
@@ -247,6 +264,7 @@ class SpatialParserV3:
                 if not label_key or label_key in ["tempat_tanggal_lahir", "jenis_kelamin", "golongan_darah"]:
                     continue
 
+                used_box_ids.add(id(box))
                 inline_val = extract_inline_value(box.text, label_key)
                 val_str = ""
                 avg_conf = 0.0
@@ -266,6 +284,8 @@ class SpatialParserV3:
                     if val_boxes:
                         val_str = " ".join(b.text for b in val_boxes)
                         avg_conf = sum(b.confidence for b in val_boxes) / len(val_boxes)
+                        for b in val_boxes:
+                            used_box_ids.add(id(b))
 
                 if val_str:
                     if label_key == "nik":
@@ -274,16 +294,21 @@ class SpatialParserV3:
                         c_val = tokenize_name(val_str)
                     elif label_key == "rt_rw":
                         c_val = clean_rt_rw(val_str)
+                        field_y_anchors["rt_rw"] = box.center_y
                     elif label_key == "agama":
                         c_val = clean_text(val_str)
+                        field_y_anchors["agama"] = box.center_y
                     elif label_key == "status_perkawinan":
                         c_val = clean_marital_status(val_str)
                     elif label_key == "kewarganegaraan":
                         c_val = clean_citizenship(val_str)
                     elif label_key in ("kecamatan", "tempat_lahir"):
                         c_val = normalize_regional(clean_text(val_str))
+                        if label_key == "kecamatan":
+                            field_y_anchors["kecamatan"] = box.center_y
                     elif label_key == "kelurahan_desa":
                         c_val = normalize_regional(tokenize_compound_name(clean_text(val_str)))
+                        field_y_anchors["kelurahan_desa"] = box.center_y
                     elif label_key == "pekerjaan":
                         c_val = tokenize_pekerjaan(clean_text(val_str))
                     elif label_key == "berlaku_hingga":
@@ -293,10 +318,12 @@ class SpatialParserV3:
                             for right_b in line[idx + 1:]:
                                 if re.search(r'SEU[MN]UR', right_b.text.upper()):
                                     raw_clean = "SEUMUR HIDUP"
+                                    used_box_ids.add(id(right_b))
                                     break
                                 cd = clean_date(right_b.text)
                                 if cd:
                                     raw_clean = cd
+                                    used_box_ids.add(id(right_b))
                                     break
                         if raw_clean:
                             if re.search(r'SEU[MN]UR', raw_clean):
@@ -311,6 +338,7 @@ class SpatialParserV3:
                         extra_parts = [val_str]
                         extra_conf_sum = avg_conf
                         extra_count = 1
+                        field_y_anchors["alamat"] = box.center_y
                         for next_line in lines[line_idx + 1:]:
                             if any(is_label_text(b.text) for b in next_line):
                                 break
@@ -323,6 +351,8 @@ class SpatialParserV3:
                                 extra_parts.append(" ".join(b.text for b in non_sig_boxes))
                                 extra_conf_sum += sum(b.confidence for b in non_sig_boxes) / len(non_sig_boxes)
                                 extra_count += 1
+                                for b in non_sig_boxes:
+                                    used_box_ids.add(id(b))
                         full_alamat = " ".join(extra_parts)
                         c_val = tokenize_address(full_alamat)
                         avg_conf = extra_conf_sum / extra_count
@@ -338,11 +368,12 @@ class SpatialParserV3:
                 possible_nik = clean_nik(b.text)
                 if possible_nik and len(possible_nik) == 16:
                     extracted_raw["nik"] = {"val": possible_nik, "conf": round(b.confidence, 1)}
+                    used_box_ids.add(id(b))
                     break
 
         # Fallback 2: Positional Structural Fallback
         if not extracted_raw["nama"]["val"] or not extracted_raw["jenis_kelamin"]["val"]:
-            body_boxes = [b for b in text_boxes if b.y_min > (0.18 * h_max) and not is_signature_zone(b)]
+            body_boxes = [b for b in text_boxes if b.y_min > (0.18 * h_max) and not is_signature_zone(b) and id(b) not in used_box_ids]
             body_boxes = sorted(body_boxes, key=lambda b: b.y_min)
 
             for b in body_boxes:
@@ -354,29 +385,35 @@ class SpatialParserV3:
                     cg = clean_gender(txt)
                     if cg:
                         extracted_raw["jenis_kelamin"] = {"val": cg, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
                         continue
 
                 if not extracted_raw["agama"]["val"]:
                     clean_ag = clean_text(txt)
                     if clean_ag and clean_ag.upper() in ["ISLAM", "KRISTEN", "KATHOLIK", "HINDU", "BUDDHA", "KHONGHUCU"]:
                         extracted_raw["agama"] = {"val": clean_ag.upper(), "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
+                        field_y_anchors["agama"] = b.center_y
                         continue
 
                 if not extracted_raw["status_perkawinan"]["val"]:
                     cs = clean_marital_status(txt)
                     if cs:
                         extracted_raw["status_perkawinan"] = {"val": cs, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
                         continue
 
                 if not extracted_raw["kewarganegaraan"]["val"]:
                     ck = clean_citizenship(txt)
                     if ck:
                         extracted_raw["kewarganegaraan"] = {"val": ck, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
                         continue
 
                 if not extracted_raw["pekerjaan"]["val"]:
                     if "BURUH" in txt.upper() or "PELAJAR" in txt.upper() or "SWASTA" in txt.upper() or "PNS" in txt.upper():
                         extracted_raw["pekerjaan"] = {"val": tokenize_pekerjaan(txt), "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
                         continue
 
                 if not extracted_raw["berlaku_hingga"]["val"]:
@@ -384,9 +421,11 @@ class SpatialParserV3:
                     is_city_date = bool(re.search(r'[A-Z]{3,}[^\d]*\d{2}[\-\./]\d{2}[\-\./]\d{4}', txt))
                     if "SEUMUR" in txt.upper():
                         extracted_raw["berlaku_hingga"] = {"val": "SEUMUR HIDUP", "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
                         continue
                     elif cd and not is_city_date:
                         extracted_raw["berlaku_hingga"] = {"val": cd, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
                         continue
 
                 if (not extracted_raw["tempat_lahir"]["val"] or not extracted_raw["tanggal_lahir"]["val"]) and clean_date(txt):
@@ -398,13 +437,15 @@ class SpatialParserV3:
                             extracted_raw["tempat_lahir"] = {"val": c_city, "conf": round(b.confidence, 1)}
                         if c_date:
                             extracted_raw["tanggal_lahir"] = {"val": c_date, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
                     continue
 
                 if not extracted_raw["nama"]["val"] and not is_label_text(txt) and len(txt) > 3 and not re.search(r'\d', txt):
                     extracted_raw["nama"] = {"val": tokenize_name(txt), "conf": round(b.confidence, 1)}
+                    used_box_ids.add(id(b))
 
-        # Layer 5: Pattern-Based Field Guesser with Semantic Guards
-        self._layer5_pattern_guesser(text_boxes, extracted_raw, h_max, w_max)
+        # Layer 5: Pattern-Based Field Guesser with Deterministic Spatial Slot Grid
+        self._layer5_pattern_guesser(text_boxes, extracted_raw, h_max, w_max, used_box_ids, field_y_anchors)
 
         # Fallback 3: Dukcapil Date of Birth Recovery from NIK
         if not extracted_raw["tanggal_lahir"]["val"] and extracted_raw["nik"]["val"]:
@@ -421,7 +462,9 @@ class SpatialParserV3:
         text_boxes: List[PaddleTextBox],
         extracted_raw: Dict[str, Dict[str, Any]],
         h_max: float,
-        w_max: float
+        w_max: float,
+        used_box_ids: Set[int],
+        field_y_anchors: Dict[str, float]
     ) -> None:
         def is_signature_zone(b: PaddleTextBox) -> bool:
             return b.x_min > (0.55 * w_max) and b.y_min > (0.55 * h_max)
@@ -434,11 +477,16 @@ class SpatialParserV3:
             txt_clean = clean_text(b.text)
             if not txt_clean:
                 continue
-            if txt_clean not in assigned_vals and not is_label_text(b.text):
-                unassigned.append(b)
+            # Strictly exclude boxes that have already been assigned to another field
+            if id(b) in used_box_ids or txt_clean in assigned_vals or is_label_text(b.text):
+                continue
+            unassigned.append(b)
 
         unassigned = sorted(unassigned, key=lambda b: b.y_min)
         kelurahan_candidates: List[PaddleTextBox] = []
+
+        y_rtrw = field_y_anchors.get("rt_rw")
+        y_agama = field_y_anchors.get("agama")
 
         for b in unassigned:
             txt = clean_text(b.text) or ""
@@ -449,6 +497,7 @@ class SpatialParserV3:
                 if cg:
                     extracted_raw["jenis_kelamin"] = {"val": cg, "conf": round(b.confidence, 1)}
                     assigned_vals.add(cg)
+                    used_box_ids.add(id(b))
                     continue
 
             # 2. RT/RW
@@ -457,6 +506,8 @@ class SpatialParserV3:
                 if clean_rtrw and re.match(r'^\d{1,3}/\d{1,3}$', clean_rtrw):
                     extracted_raw["rt_rw"] = {"val": clean_rtrw, "conf": round(b.confidence, 1)}
                     assigned_vals.add(clean_rtrw)
+                    used_box_ids.add(id(b))
+                    y_rtrw = b.center_y
                     continue
 
             # 3. Alamat
@@ -464,6 +515,7 @@ class SpatialParserV3:
                 if re.match(r'^(KP\.|JL\.|KMP\.|PERUM\.|GG\.|DSN\.|BLOK|KP\s|JL\s)', txt, re.I):
                     extracted_raw["alamat"] = {"val": txt, "conf": round(b.confidence, 1)}
                     assigned_vals.add(txt)
+                    used_box_ids.add(id(b))
                     continue
 
             # 4. Agama
@@ -471,9 +523,11 @@ class SpatialParserV3:
                 if txt.upper() in ["ISLAM", "KRISTEN", "KATHOLIK", "HINDU", "BUDDHA", "KHONGHUCU"]:
                     extracted_raw["agama"] = {"val": txt.upper(), "conf": round(b.confidence, 1)}
                     assigned_vals.add(txt.upper())
+                    used_box_ids.add(id(b))
+                    y_agama = b.center_y
                     continue
 
-            # 5. Kelurahan/kecamatan candidates (Semantic guards against label and gender noise)
+            # 5. Kelurahan/Kecamatan Candidates with Template Y-Band Spatial Constraints
             if not extracted_raw["kelurahan_desa"]["val"] or not extracted_raw["kecamatan"]["val"]:
                 if re.match(r'^[A-Z\s\.\-]+$', txt) and len(txt) > 3 and not re.search(r'\d', txt):
                     noise_terms = {
@@ -490,13 +544,21 @@ class SpatialParserV3:
                         tokenized_txt = tokenize_name(txt) or txt
                         nama_val = extracted_raw["nama"].get("val") or ""
                         is_same_as_nama = (txt == nama_val or tokenized_txt == nama_val)
+
                         if not is_same_as_nama:
                             words = txt.split()
                             is_person_name = len(words) > 0 and all(w in _V3_NAME_LEXICON for w in words)
-                            if not is_person_name:
+
+                            # Spatial Y-Band Constraints:
+                            # 1. Kel/Desa & Kecamatan must be vertically below RT/RW (if known)
+                            is_below_rtrw = (y_rtrw is None) or (b.center_y >= y_rtrw - 8.0)
+                            # 2. Kel/Desa & Kecamatan must be vertically above Agama (if known)
+                            is_above_agama = (y_agama is None) or (b.center_y <= y_agama + 8.0)
+
+                            if not is_person_name and is_below_rtrw and is_above_agama:
                                 kelurahan_candidates.append(b)
 
-        # Disambiguate kelurahan vs kecamatan by Y-position ordering
+        # Disambiguate kelurahan vs kecamatan by vertical Y-position ordering
         if kelurahan_candidates:
             kelurahan_candidates = sorted(kelurahan_candidates, key=lambda b: b.y_min)
             if not extracted_raw["kelurahan_desa"]["val"] and len(kelurahan_candidates) >= 1:
@@ -504,8 +566,10 @@ class SpatialParserV3:
                 c_k = normalize_regional(tokenize_compound_name(clean_text(b.text)))
                 if c_k:
                     extracted_raw["kelurahan_desa"] = {"val": c_k, "conf": round(b.confidence, 1)}
+                    used_box_ids.add(id(b))
             if not extracted_raw["kecamatan"]["val"] and len(kelurahan_candidates) >= 2:
                 b = kelurahan_candidates[1]
                 c_kec = normalize_regional(clean_text(b.text))
                 if c_kec:
                     extracted_raw["kecamatan"] = {"val": c_kec, "conf": round(b.confidence, 1)}
+                    used_box_ids.add(id(b))
