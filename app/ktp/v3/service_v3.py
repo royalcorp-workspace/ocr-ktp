@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from app.core.logging_config import logger, request_id_var
 from app.ktp.v3.onnx_engine import ONNXEngineV3
 from app.ktp.v3.spatial_parser_v3 import SpatialParserV3
@@ -76,9 +76,6 @@ def _run_tiered_hybrid_pipeline(img_bytes: bytes) -> Tuple[Dict[str, Dict[str, A
         **timings
     }
     return parsed_raw, timings_summary
-
-
-from typing import Tuple
 
 
 def process_ktp_image_v3(img_bytes: bytes) -> KTPOcrResponseV2:
