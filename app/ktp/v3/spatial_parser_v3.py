@@ -5,7 +5,8 @@ from app.ktp.v3.field_cleaners_v3 import (
     clean_text, clean_nik, clean_date, clean_gender,
     clean_blood_type, clean_marital_status, clean_citizenship,
     clean_rt_rw, tokenize_pekerjaan, normalize_regional, tokenize_compound_name,
-    tokenize_name, tokenize_address, extract_date_from_nik, _V3_NAME_LEXICON
+    tokenize_name, tokenize_address, extract_date_from_nik, _V3_NAME_LEXICON,
+    _KOTA_KABUPATEN_LEXICON
 )
 
 # Label Anchor Matrix Patterns with OCR Typo Tolerance for V3
@@ -17,34 +18,44 @@ LABEL_PATTERNS = {
         r'TEMPA[TL]\s+LAHIR',
         r'TG[IL1]\s*LAHIR',
         r'\bLAHIR\b',
-        r'\bTEMPAT\b'
+        r'\bTEMPAT\b',
+        r'\bat/Tgl\s*Lahir\b',
+        r'\bTgl\s*Lahir\b'
     ],
     "jenis_kelamin": [
         r'J[EO]N[I1]S\s+KE[IL1]AM[I1][NM]',
         r'JENIS\s+KELAMI[NM]',
         r'\bKE[IL1]AM[I1][NM]\b',
-        r'\bJ[EO]N[I1]S\b'
+        r'\bJ[EO]N[I1]S\b',
+        r'\bxelamin\b',
+        r'\bkelamin\b'
     ],
     "golongan_darah": [r'GOL\.?\s*DARAH', r'\bDARAH\b', r'\bGOL\b'],
     "alamat": [r'\b(ALAMAT|ALAMA|ALMT)\b'],
-    "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW|RI/RW|RT/RV|RT/PW)\b'],
+    "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW|RI/RW|RT/RV|RT/PW|T/RW)\b'],
     "kelurahan_desa": [
         r'KE[LV1I/|]\s*[/.\s]?\s*DESA',
         r'\bKE[LV]DESA\b',
         r'KEL\s*/?\s*DESA',
         r'\bDESA\b',
-        r'\bKELURAHAN\b'
+        r'\bKELURAHAN\b',
+        r'\bel/Desa\b'
     ],
-    "kecamatan": [r'\b(KECAMATAN|KECAM|KEC)\b'],
+    "kecamatan": [
+        r'\b(KECAMATAN|KECAM|KEC)\b',
+        r'\b[KkE]?CAMATAN\b',
+        r'\bECAMATAN\b'
+    ],
     "agama": [r'\bAGAMA\b'],
     "status_perkawinan": [
         r'STATUS\s+PERKAWINA[NR]',
         r'STATUS\s+PERKAWINAN',
-        r'\bPERKAWINA[NR]\b'
+        r'\bPERKAWINA[NR]\b',
+        r'\bPerkawinan\b'
     ],
     "pekerjaan": [r'\b(PEKERJAAN|PEKERJA)\b'],
-    "kewarganegaraan": [r'\b(KEWARGANEGARAAN|KEWARGAN)\b'],
-    "berlaku_hingga": [r'.*RLAKU\s*HINGGA', r'.*HINGGA', r'\b[BN]ERLAKU\b'],
+    "kewarganegaraan": [r'\b(KEWARGANEGARAAN|KEWARGAN|anegaraan)\b'],
+    "berlaku_hingga": [r'.*RLAKU\s*HINGGA', r'.*HINGGA', r'\b[BN]ERLAKU\b', r'\bHingga\b'],
 }
 
 
@@ -566,7 +577,7 @@ class SpatialParserV3:
                         or is_label_text(txt)
                     )
                     is_gender_noise = bool(clean_gender(txt) or re.search(r'LAK|PEREMP|WANITA|PRIA', txt.upper()))
-                    is_left_label_column = (b.x_min < (0.22 * w_max) and len(txt) <= 10)
+                    is_left_label_column = (b.x_min < (0.15 * w_max) and len(txt) <= 8 and not any(w in _KOTA_KABUPATEN_LEXICON for w in txt.split()))
 
                     if not is_label_noise and not is_gender_noise and not is_left_label_column and txt not in noise_terms:
                         tokenized_txt = tokenize_name(txt) or txt
