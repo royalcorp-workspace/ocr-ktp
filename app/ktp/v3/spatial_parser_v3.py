@@ -461,6 +461,11 @@ class SpatialParserV3:
                 nik_conf = extracted_raw["nik"].get("conf", 95.0)
                 extracted_raw["tanggal_lahir"] = {"val": nik_date, "conf": round(nik_conf, 1)}
 
+        # Fallback 4: Indonesian e-KTP Lifetime Expiry Rule (UU No. 24 Tahun 2013)
+        if not extracted_raw["berlaku_hingga"]["val"] and extracted_raw["nik"]["val"]:
+            nik_conf = extracted_raw["nik"].get("conf", 95.0)
+            extracted_raw["berlaku_hingga"] = {"val": "SEUMUR HIDUP", "conf": round(nik_conf, 1)}
+
         return extracted_raw
 
     def _layer5_pattern_guesser(
@@ -533,7 +538,20 @@ class SpatialParserV3:
                     y_agama = b.center_y
                     continue
 
-            # 5. Kelurahan/Kecamatan Candidates with Template Y-Band Spatial Constraints
+            # 5. Berlaku hingga scan in bottom zone
+            if not extracted_raw["berlaku_hingga"]["val"] and b.y_min > (0.55 * h_max):
+                if "SEUMUR" in txt.upper() or "HIDUP" in txt.upper():
+                    extracted_raw["berlaku_hingga"] = {"val": "SEUMUR HIDUP", "conf": round(b.confidence, 1)}
+                    used_box_ids.add(id(b))
+                    continue
+                cd = clean_date(txt)
+                is_city_date = bool(re.search(r'[A-Z]{3,}[^\d]*\d{2}[\-\./]\d{2}[\-\./]\d{4}', txt))
+                if cd and not is_city_date:
+                    extracted_raw["berlaku_hingga"] = {"val": cd, "conf": round(b.confidence, 1)}
+                    used_box_ids.add(id(b))
+                    continue
+
+            # 6. Kelurahan/Kecamatan Candidates with Template Y-Band Spatial Constraints
             if not extracted_raw["kelurahan_desa"]["val"] or not extracted_raw["kecamatan"]["val"]:
                 if re.match(r'^[A-Z\s\.\-]+$', txt) and len(txt) > 3 and not re.search(r'\d', txt):
                     noise_terms = {
@@ -568,18 +586,39 @@ class SpatialParserV3:
                             if not is_person_name and is_below_rtrw and is_above_agama:
                                 kelurahan_candidates.append(b)
 
-        # Disambiguate kelurahan vs kecamatan by vertical Y-position ordering
+        # Disambiguate kelurahan vs kecamatan by Universal Topological Ordering
         if kelurahan_candidates:
             kelurahan_candidates = sorted(kelurahan_candidates, key=lambda b: b.y_min)
-            if not extracted_raw["kelurahan_desa"]["val"] and len(kelurahan_candidates) >= 1:
-                b = kelurahan_candidates[0]
-                c_k = normalize_regional(tokenize_compound_name(clean_text(b.text)))
-                if c_k:
-                    extracted_raw["kelurahan_desa"] = {"val": c_k, "conf": round(b.confidence, 1)}
-                    used_box_ids.add(id(b))
-            if not extracted_raw["kecamatan"]["val"] and len(kelurahan_candidates) >= 2:
-                b = kelurahan_candidates[1]
-                c_kec = normalize_regional(clean_text(b.text))
-                if c_kec:
-                    extracted_raw["kecamatan"] = {"val": c_kec, "conf": round(b.confidence, 1)}
-                    used_box_ids.add(id(b))
+
+            # Skenario 1: Keduanya belum terisi
+            if not extracted_raw["kelurahan_desa"]["val"] and not extracted_raw["kecamatan"]["val"]:
+                if len(kelurahan_candidates) >= 1:
+                    b = kelurahan_candidates[0]
+                    c_k = normalize_regional(tokenize_compound_name(clean_text(b.text)))
+                    if c_k:
+                        extracted_raw["kelurahan_desa"] = {"val": c_k, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
+                if len(kelurahan_candidates) >= 2:
+                    b = kelurahan_candidates[1]
+                    c_kec = normalize_regional(clean_text(b.text))
+                    if c_kec:
+                        extracted_raw["kecamatan"] = {"val": c_kec, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
+
+            # Skenario 2: Hanya Kelurahan yang belum terisi
+            elif not extracted_raw["kelurahan_desa"]["val"]:
+                if len(kelurahan_candidates) >= 1:
+                    b = kelurahan_candidates[0]
+                    c_k = normalize_regional(tokenize_compound_name(clean_text(b.text)))
+                    if c_k:
+                        extracted_raw["kelurahan_desa"] = {"val": c_k, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
+
+            # Skenario 3: Hanya Kecamatan yang belum terisi (Kasus KTP Andri Restu Fauji)
+            elif not extracted_raw["kecamatan"]["val"]:
+                if len(kelurahan_candidates) >= 1:
+                    b = kelurahan_candidates[0]
+                    c_kec = normalize_regional(clean_text(b.text))
+                    if c_kec:
+                        extracted_raw["kecamatan"] = {"val": c_kec, "conf": round(b.confidence, 1)}
+                        used_box_ids.add(id(b))
