@@ -2,7 +2,7 @@ import time
 from typing import Dict, Any
 from app.core.logging_config import logger, request_id_var
 from app.ktp.v3.onnx_engine import ONNXEngineV3
-from app.ktp.v2.spatial_parser import SpatialParserV2
+from app.ktp.v3.spatial_parser_v3 import SpatialParserV3
 from app.ktp.v2.schemas_v2 import KTPOcrResponseV2, ConsensusResponseV2, FieldWithSourceV2
 from app.ktp.v2.consensus_v2 import run_consensus_v2
 
@@ -10,7 +10,7 @@ from app.ktp.v2.consensus_v2 import run_consensus_v2
 def process_ktp_image_v3(img_bytes: bytes) -> KTPOcrResponseV2:
     """
     Core OCR Extraction pipeline for V3 (/ktp/v3/extract) using ONNX Runtime.
-    Extracts 15 Dukcapil fields using SpatialParserV2 and returns source="OCR".
+    Extracts 15 Dukcapil fields using SpatialParserV3 and returns source="OCR".
     """
     req_id = request_id_var.get()
     t_start = time.perf_counter()
@@ -19,7 +19,7 @@ def process_ktp_image_v3(img_bytes: bytes) -> KTPOcrResponseV2:
     text_boxes, timings = engine.extract_text_boxes_with_timing(img_bytes)
 
     t_parse_start = time.perf_counter()
-    parser = SpatialParserV2()
+    parser = SpatialParserV3()
     parsed_raw = parser.parse_ktp(text_boxes)
     t_parse_ms = round((time.perf_counter() - t_parse_start) * 1000, 2)
 
@@ -62,7 +62,7 @@ def run_consensus_ocr_v3(img_bytes: bytes, mobile_data: dict) -> ConsensusRespon
     text_boxes, timings = engine.extract_text_boxes_with_timing(img_bytes)
 
     t_parse_start = time.perf_counter()
-    parser = SpatialParserV2()
+    parser = SpatialParserV3()
     parsed_raw = parser.parse_ktp(text_boxes)
     t_parse_ms = round((time.perf_counter() - t_parse_start) * 1000, 2)
 

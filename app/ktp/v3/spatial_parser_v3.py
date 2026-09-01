@@ -1,14 +1,14 @@
 import re
 from typing import List, Dict, Any, Tuple, Optional
 from app.ktp.v2.paddle_engine import PaddleTextBox
-from app.ktp.v2.field_cleaners import (
+from app.ktp.v3.field_cleaners_v3 import (
     clean_text, clean_nik, clean_date, clean_gender,
     clean_blood_type, clean_marital_status, clean_citizenship,
     clean_rt_rw, tokenize_pekerjaan, normalize_regional, tokenize_compound_name,
-    tokenize_name, tokenize_address
+    tokenize_name, tokenize_address, _V3_NAME_LEXICON
 )
 
-# Label Anchor Matrix Patterns with OCR Typo Tolerance
+# Label Anchor Matrix Patterns with OCR Typo Tolerance for V3
 LABEL_PATTERNS = {
     "nik": [r'\b(NIK|HIK|MIL|NlK|N1K)\b'],
     "nama": [r'\b(NAMA|NAM)\b'],
@@ -19,7 +19,12 @@ LABEL_PATTERNS = {
         r'\bLAHIR\b',
         r'\bTEMPAT\b'
     ],
-    "jenis_kelamin": [r'JENIS\s+KELAMI[NM]', r'\bKELAMI[NM]\b'],
+    "jenis_kelamin": [
+        r'J[EO]N[I1]S\s+KE[IL1]AM[I1][NM]',
+        r'JENIS\s+KELAMI[NM]',
+        r'\bKE[IL1]AM[I1][NM]\b',
+        r'\bJ[EO]N[I1]S\b'
+    ],
     "golongan_darah": [r'GOL\.?\s*DARAH', r'\bDARAH\b'],
     "alamat": [r'\b(ALAMAT|ALAMA)\b'],
     "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW)\b'],
@@ -36,6 +41,7 @@ LABEL_PATTERNS = {
     "berlaku_hingga": [r'.*RLAKU\s*HINGGA', r'.*HINGGA', r'\b[BN]ERLAKU\b'],
 }
 
+
 def is_label_text(text: str) -> Optional[str]:
     """Returns label_key if text matches any label pattern, else None."""
     upper = text.upper().strip()
@@ -45,20 +51,19 @@ def is_label_text(text: str) -> Optional[str]:
                 return label_key
     return None
 
+
 def extract_inline_value(text: str, label_key: str) -> Optional[str]:
-    """Extracts value text if label and value are combined in a single box (e.g. 'Status Perkawinan: KAWIN')."""
+    """Extracts value text if label and value are combined in a single box."""
     if not text:
         return None
     s = text.strip()
 
-    # Split by colon ':'
     if ":" in s:
         parts = s.split(":", 1)
         val = parts[1].strip()
         if val:
             return val
 
-    # If no colon, strip matching label pattern from text
     patterns = LABEL_PATTERNS.get(label_key, [])
     upper = s.upper()
     for pat in patterns:
@@ -68,6 +73,7 @@ def extract_inline_value(text: str, label_key: str) -> Optional[str]:
             if val:
                 return val
     return None
+
 
 def group_boxes_into_lines(boxes: List[PaddleTextBox]) -> List[List[PaddleTextBox]]:
     """Groups text boxes into horizontal lines based on vertical overlap."""
@@ -98,10 +104,11 @@ def group_boxes_into_lines(boxes: List[PaddleTextBox]) -> List[List[PaddleTextBo
     lines = sorted(lines, key=lambda line: sum(b.center_y for b in line) / len(line))
     return lines
 
-class SpatialParserV2:
+
+class SpatialParserV3:
     def parse_ktp(self, text_boxes: List[PaddleTextBox]) -> Dict[str, Dict[str, Any]]:
         """
-        Parses text boxes using 4-Layer Multi-Strategy Pipeline.
+        Parses text boxes using 5-Layer Multi-Strategy Pipeline for V3.
         """
         if not text_boxes:
             return {k: {"val": None, "conf": 0.0} for k in [
@@ -138,7 +145,6 @@ class SpatialParserV2:
 
         for line in lines:
             line_str = " ".join(b.text for b in line)
-
             line_avg_y = sum(b.center_y for b in line) / len(line)
             if line_avg_y < (0.18 * h_max) and ("PROVINSI" in line_str.upper() or "KABUPATEN" in line_str.upper()):
                 continue
@@ -172,7 +178,7 @@ class SpatialParserV2:
                         city_part = ""
                         date_part = ""
 
-                    c_city = clean_text(city_part)
+                    c_city = normalize_regional(clean_text(city_part))
                     c_date = clean_date(date_part)
 
                     if c_city:
@@ -182,7 +188,7 @@ class SpatialParserV2:
                 continue
 
             # 2. Compound Line: JENIS KELAMIN & GOL. DARAH
-            if is_label_text(line_str) == "jenis_kelamin" or re.search(r'JENIS\s+KELAMI[NM]', line_str, re.I):
+            if is_label_text(line_str) == "jenis_kelamin" or re.search(r'J[EO]N[I1]S\s+KE[IL1]AM[I1][NM]|JENIS\s+KELAMI[NM]', line_str, re.I):
                 gender_boxes = []
                 blood_boxes = []
                 found_blood_label = False
@@ -232,7 +238,6 @@ class SpatialParserV2:
                 if not label_key or label_key in ["tempat_tanggal_lahir", "jenis_kelamin", "golongan_darah"]:
                     continue
 
-                # Check inline value FIRST if box contains colon or inline value
                 inline_val = extract_inline_value(box.text, label_key)
                 val_str = ""
                 avg_conf = 0.0
@@ -274,34 +279,32 @@ class SpatialParserV2:
                         c_val = tokenize_pekerjaan(clean_text(val_str))
                     elif label_key == "berlaku_hingga":
                         raw_clean = clean_text(val_str)
-                        # Jika nilai hanya label tanpa value, cari di box kanan
                         if raw_clean in {"HINGGA", "BERLAKU HINGGA", "BERLAKU", "NORLAKU HINGGA"}:
                             raw_clean = None
                             for right_b in line[idx + 1:]:
-                                if "SEUMUR" in right_b.text.upper():
+                                if re.search(r'SEU[MN]UR', right_b.text.upper()):
                                     raw_clean = "SEUMUR HIDUP"
                                     break
                                 cd = clean_date(right_b.text)
                                 if cd:
                                     raw_clean = cd
                                     break
-                        # Normalisasi SEUMURHIDUP → SEUMUR HIDUP
-                        if raw_clean and "SEUMUR" in raw_clean and " " not in raw_clean:
-                            raw_clean = "SEUMUR HIDUP"
+                        if raw_clean:
+                            if re.search(r'SEU[MN]UR', raw_clean):
+                                raw_clean = "SEUMUR HIDUP"
+                            else:
+                                date_m = re.search(r'(\d{2}[-./]\d{2}[-./]\d{4})', raw_clean)
+                                if date_m:
+                                    raw_clean = clean_date(date_m.group(1))
                         c_val = raw_clean
                     elif label_key == "alamat":
-                        # Collect multi-line continuation: ambil baris berikutnya
-                        # selama baris tersebut tidak dimulai dengan label baru
                         line_idx = lines.index(line)
                         extra_parts = [val_str]
                         extra_conf_sum = avg_conf
                         extra_count = 1
                         for next_line in lines[line_idx + 1:]:
-                            next_line_str = " ".join(b.text for b in next_line)
-                            # Berhenti jika baris berikutnya mengandung label field baru
                             if any(is_label_text(b.text) for b in next_line):
                                 break
-                            # Berhenti jika baris terlalu jauh ke bawah (lebih dari 2 baris setelah alamat)
                             next_avg_y = sum(b.center_y for b in next_line) / len(next_line)
                             cur_avg_y = sum(b.center_y for b in line) / len(line)
                             if next_avg_y - cur_avg_y > 80:
@@ -328,7 +331,7 @@ class SpatialParserV2:
                     extracted_raw["nik"] = {"val": possible_nik, "conf": round(b.confidence, 1)}
                     break
 
-        # Fallback 2: Positional Structural Fallback (For Label-Less / Cropped Cards like ktp 4)
+        # Fallback 2: Positional Structural Fallback
         if not extracted_raw["nama"]["val"] or not extracted_raw["jenis_kelamin"]["val"]:
             body_boxes = [b for b in text_boxes if b.y_min > (0.18 * h_max) and not is_signature_zone(b)]
             body_boxes = sorted(body_boxes, key=lambda b: b.y_min)
@@ -369,8 +372,6 @@ class SpatialParserV2:
 
                 if not extracted_raw["berlaku_hingga"]["val"]:
                     cd = clean_date(txt)
-                    # Hanya assign jika teks adalah MURNI tanggal atau SEUMUR HIDUP
-                    # Tolak jika teks berisi nama kota + tanggal (itu adalah tempat/tgl lahir)
                     is_city_date = bool(re.search(r'[A-Z]{3,}[^\d]*\d{2}[\-\./]\d{2}[\-\./]\d{4}', txt))
                     if "SEUMUR" in txt.upper():
                         extracted_raw["berlaku_hingga"] = {"val": "SEUMUR HIDUP", "conf": round(b.confidence, 1)}
@@ -379,11 +380,10 @@ class SpatialParserV2:
                         extracted_raw["berlaku_hingga"] = {"val": cd, "conf": round(b.confidence, 1)}
                         continue
 
-                # Birth place & date check
                 if (not extracted_raw["tempat_lahir"]["val"] or not extracted_raw["tanggal_lahir"]["val"]) and clean_date(txt):
                     parts = re.split(r'[,:\.]+', txt)
                     if len(parts) >= 2:
-                        c_city = clean_text(parts[0])
+                        c_city = normalize_regional(clean_text(parts[0]))
                         c_date = clean_date(" ".join(parts[1:]))
                         if c_city:
                             extracted_raw["tempat_lahir"] = {"val": c_city, "conf": round(b.confidence, 1)}
@@ -391,11 +391,10 @@ class SpatialParserV2:
                             extracted_raw["tanggal_lahir"] = {"val": c_date, "conf": round(b.confidence, 1)}
                     continue
 
-                # Name fallback (all uppercase text before birth place and after NIK)
                 if not extracted_raw["nama"]["val"] and not is_label_text(txt) and len(txt) > 3 and not re.search(r'\d', txt):
                     extracted_raw["nama"] = {"val": tokenize_name(txt), "conf": round(b.confidence, 1)}
 
-        # Layer 5: Pattern-Based Field Guesser (for Label-Less / Cropped Cards)
+        # Layer 5: Pattern-Based Field Guesser with Semantic Guards
         self._layer5_pattern_guesser(text_boxes, extracted_raw, h_max, w_max)
 
         return extracted_raw
@@ -435,7 +434,7 @@ class SpatialParserV2:
                     assigned_vals.add(cg)
                     continue
 
-            # 2. RT/RW — format NNN/NNN
+            # 2. RT/RW
             if not extracted_raw["rt_rw"]["val"]:
                 clean_rtrw = clean_rt_rw(txt)
                 if clean_rtrw and re.match(r'^\d{1,3}/\d{1,3}$', clean_rtrw):
@@ -443,21 +442,21 @@ class SpatialParserV2:
                     assigned_vals.add(clean_rtrw)
                     continue
 
-            # 3. Alamat — prefix KP., JL., KMP., PERUM., GG., DSN., BLOK
+            # 3. Alamat
             if not extracted_raw["alamat"]["val"]:
                 if re.match(r'^(KP\.|JL\.|KMP\.|PERUM\.|GG\.|DSN\.|BLOK|KP\s|JL\s)', txt, re.I):
                     extracted_raw["alamat"] = {"val": txt, "conf": round(b.confidence, 1)}
                     assigned_vals.add(txt)
                     continue
 
-            # 4. Agama — exact list match
+            # 4. Agama
             if not extracted_raw["agama"]["val"]:
                 if txt.upper() in ["ISLAM", "KRISTEN", "KATHOLIK", "HINDU", "BUDDHA", "KHONGHUCU"]:
                     extracted_raw["agama"] = {"val": txt.upper(), "conf": round(b.confidence, 1)}
                     assigned_vals.add(txt.upper())
                     continue
 
-            # 5. Kelurahan/kecamatan candidates — uppercase letters only, len > 3, no digits
+            # 5. Kelurahan/kecamatan candidates (Semantic guards against label and gender noise)
             if not extracted_raw["kelurahan_desa"]["val"] or not extracted_raw["kecamatan"]["val"]:
                 if re.match(r'^[A-Z\s\.\-]+$', txt) and len(txt) > 3 and not re.search(r'\d', txt):
                     noise_terms = {
@@ -467,13 +466,18 @@ class SpatialParserV2:
                         "PEKERJAAN", "KEWARGANEGARAAN", "BERLAKU", "HINGGA", "ALAMAT", "DESA",
                         "KELURAHAN", "KECAMATAN", "NIK", "NAMA"
                     }
-                    if txt not in noise_terms and txt != extracted_raw["nama"]["val"]:
-                        # Cek apakah txt merupakan nama orang (seluruh kata terdaftar di name lexicon)
-                        from app.ktp.v2.field_cleaners import _V2_NAME_LEXICON
-                        words = txt.split()
-                        is_person_name = len(words) > 0 and all(w in _V2_NAME_LEXICON for w in words)
-                        if not is_person_name:
-                            kelurahan_candidates.append(b)
+                    is_label_noise = bool(re.search(r'\b(J[EO]N[I1]S|KE[IL1]AM[I1][NM]|GOL|DARAH|AGAMA|STATU|PERKAW|PEKERJ|WARGA|BERLAKU|HINGGA|ALAMAT|PROV|KABUP)\b', txt))
+                    is_gender_noise = bool(clean_gender(txt) or re.search(r'LAK|PEREMP|WANITA|PRIA', txt.upper()))
+
+                    if not is_label_noise and not is_gender_noise and txt not in noise_terms:
+                        tokenized_txt = tokenize_name(txt) or txt
+                        nama_val = extracted_raw["nama"].get("val") or ""
+                        is_same_as_nama = (txt == nama_val or tokenized_txt == nama_val)
+                        if not is_same_as_nama:
+                            words = txt.split()
+                            is_person_name = len(words) > 0 and all(w in _V3_NAME_LEXICON for w in words)
+                            if not is_person_name:
+                                kelurahan_candidates.append(b)
 
         # Disambiguate kelurahan vs kecamatan by Y-position ordering
         if kelurahan_candidates:
@@ -488,4 +492,3 @@ class SpatialParserV2:
                 c_kec = normalize_regional(clean_text(b.text))
                 if c_kec:
                     extracted_raw["kecamatan"] = {"val": c_kec, "conf": round(b.confidence, 1)}
-

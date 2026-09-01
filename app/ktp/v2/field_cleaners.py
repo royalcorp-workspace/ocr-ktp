@@ -94,10 +94,6 @@ def clean_rt_rw(raw_val: Optional[str]) -> Optional[str]:
     if not s:
         return None
     s = re.sub(r'\s*/\s*', '/', s)
-    # Fix OCR misread 6 -> 0 in 3-digit RT/RW (e.g. 002/606 -> 002/006, 601/017 -> 001/017)
-    # OCR on low-contrast cards frequently confuses leading '60' for '00'
-    s = re.sub(r'\b60(\d)\b', r'00\1', s)
-    s = re.sub(r'/60(\d)\b', r'/00\1', s)
     return s if s else None
 
 
@@ -218,9 +214,6 @@ def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
     for kw in keywords:
         s = re.sub(rf'([A-Za-z]{{3,}})({kw})', r'\1 \2', s)
 
-    # 1b. Fix common OCR typos in address keywords (e.g. MONIYET -> MONYET)
-    s = re.sub(r'\bMONIYET\b', 'MONYET', s)
-
     # 2. Separasi kata BLOK / NO / KP / JL dengan huruf/angka setelahnya
     s = re.sub(r'\bBLOK([A-Z])', r'BLOK \1', s)
     s = re.sub(r'\bNO([A-Z0-9])', r'NO \1', s)
@@ -261,10 +254,6 @@ def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
     # Re-fix formatting seperti BLOK E - 4 -> BLOK E-4, NO 2 A -> NO 2A
     res = re.sub(r'\b([A-Z])\s*-\s*(\d+)\b', r'\1-\2', res)
     res = re.sub(r'\b(\d+)\s+([A-Z])\b', r'\1\2', res)
-    res = re.sub(r'\bMONIYET\b', 'MONYET', res)
-    # Clean redundant period after word (e.g. PERUM. PASIR. SEMBUNG -> PERUM. PASIR SEMBUNG)
-    res = re.sub(r'\b(PASIR|BLOK|KP|JL)\.\s*', r'\1 ', res)
-    res = re.sub(r'\s*\.\s*', '. ', res)
     res = re.sub(r'\s*\.\s*', '. ', res)
     return re.sub(r'\s+', ' ', res).strip()
 
@@ -376,51 +365,33 @@ _PEKERJAAN_VOCAB: List[str] = sorted([
 
 def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
     """Memecah teks pekerjaan yang digabung tanpa spasi (misal BURUHHARIANLEPAS)
-    menggunakan greedy longest-match terhadap kamus kata pekerjaan.
-    Juga menangani merge parsial: BURUH HARIANLEPAS → BURUH HARIAN LEPAS."""
+    menggunakan greedy longest-match terhadap kamus kata pekerjaan."""
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
-
-    # Pre-clean common OCR character misreads in Indonesian occupation terms
-    s = s.replace("HARLAN", "HARIAN").replace("PELAIAR", "PELAJAR").replace("SWA5TA", "SWASTA")
-    s = s.replace("LEPA5", "LEPAS").replace("BURUHHARLAN", "BURUH HARIAN")
-
-    def _greedy_match(tok: str) -> str:
-        """Greedy longest-match tokenizer untuk satu token tunggal tanpa spasi."""
-        if '/' in tok or len(tok) <= 4:
-            return tok
-        result: List[str] = []
-        remaining = tok
-        max_iter = 30
-        iteration = 0
-        while remaining and iteration < max_iter:
-            iteration += 1
-            matched = False
-            for vocab_word in _PEKERJAAN_VOCAB:
-                vw_no_space = vocab_word.replace(' ', '').replace('/', '')
-                if remaining.startswith(vw_no_space):
-                    result.append(vocab_word)
-                    remaining = remaining[len(vw_no_space):]
-                    matched = True
-                    break
-            if not matched:
-                result.append(remaining)
-                break
-        return ' '.join(result).strip() if result else tok
-
-    if '/' in s:
+    # Jika sudah mengandung spasi/slash, kembalikan langsung
+    if ' ' in s or '/' in s:
         return s
-
-    if ' ' in s:
-        # Proses per-token: tangkap kasus BURUH HARIANLEPAS → BURUH HARIAN LEPAS
-        parts = s.split()
-        result_parts = [_greedy_match(p) for p in parts]
-        result = ' '.join(result_parts)
-        return re.sub(r'\s+', ' ', result).strip()
-
-    # Tidak ada spasi — greedy match seluruh string
-    result = _greedy_match(s)
+    # Greedy longest-match terhadap _PEKERJAAN_VOCAB
+    result_tokens: List[str] = []
+    remaining = s
+    max_iter = 30
+    iteration = 0
+    while remaining and iteration < max_iter:
+        iteration += 1
+        matched = False
+        for vocab_word in _PEKERJAAN_VOCAB:
+            vw_no_space = vocab_word.replace(' ', '').replace('/', '')
+            if remaining.startswith(vw_no_space):
+                result_tokens.append(vocab_word)
+                remaining = remaining[len(vw_no_space):]
+                matched = True
+                break
+        if not matched:
+            # Tidak ada match — pertahankan sisa string as-is
+            result_tokens.append(remaining)
+            break
+    result = ' '.join(result_tokens).strip()
     result = re.sub(r'\s+', ' ', result)
     return result if result else s
 
@@ -428,17 +399,13 @@ def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
 # ─── Regional Name Normalizer ────────────────────────────────────────────────────
 def normalize_regional(raw_val: Optional[str]) -> Optional[str]:
     """Normalisasi nama wilayah Indonesia:
-    - Q → C (OCR sering salah baca C sebagai Q): RANQAEKEK → RANCAEKEK
-    - X → K (OCR sering salah baca K sebagai X pada gambar kualitas rendah): XELAMIN → KELAMIN
-    - Truncated city names: BANDUN -> BANDUNG
+    - Q → C (nama wilayah RI tidak mengandung Q asli, OCR sering salah baca C sebagai Q)
+    Contoh: RANQAEKEK → RANCAEKEK
     """
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
     s = s.replace('Q', 'C')
-    s = s.replace('X', 'K')  # Nama wilayah Indonesia tidak menggunakan huruf X asli
-    if re.search(r'\bBANDUN$', s):
-        s = s + 'G'
     s = re.sub(r'\s+', ' ', s).strip()
     return s if s else None
 
