@@ -168,7 +168,9 @@ _KOTA_KABUPATEN_LEXICON: Set[str] = {
     "TELUK WONDAMA", "TEMANGGUNG", "TERNATE", "TIDORE KEPULAUAN", "TIMOR TENGAH SELATAN",
     "TIMOR TENGAH UTARA", "TOBA", "TOJO UNA-UNA", "TOLI-TOLI", "TOLIKARA", "TOMOHON", "TORAJA UTARA",
     "TRENGGALEK", "TUBAN", "TULANG BAWANG", "TULANG BAWANG BARAT", "TULUNGAGUNG", "WAJO", "WAKATOBI",
-    "WAROPEN", "WAY KANAN", "WONOGIRI", "WONOSOBO", "YAHUKIMO", "YALIMO", "YOGYAKARTA"
+    "WAROPEN", "WAY KANAN", "WONOGIRI", "WONOSOBO", "YAHUKIMO", "YALIMO", "YOGYAKARTA",
+    "RANCAEKEK", "CILAKU", "CICALENGKA", "CIPARAY", "CIBIRU", "SOREANG", "LEMBANG", "PARIGI",
+    "JATISARI", "JELEGONG", "SIRNAGALIH", "SUKAMULYA", "SUKA MULYA", "BOJONGSALAM", "BOJONG SALAM"
 }
 
 
@@ -373,14 +375,14 @@ def normalize_regional(raw_val: Optional[str]) -> Optional[str]:
         if len(valid_city) >= 5 and valid_city.startswith(s) and len(valid_city) - len(s) == 1:
             return valid_city
 
-    # 3. Fuzzy match with Levenshtein distance <= 1 for names of length >= 6
+    # 3. Fuzzy match with Levenshtein distance <= 2 for names of length >= 6
     if len(s) >= 6:
         best_match = None
         min_dist = 99
         for valid_city in _KOTA_KABUPATEN_LEXICON:
-            if abs(len(valid_city) - len(s)) <= 1:
+            if abs(len(valid_city) - len(s)) <= 2:
                 dist = levenshtein_distance(s, valid_city)
-                if dist <= 1 and dist < min_dist:
+                if dist <= 2 and dist < min_dist:
                     min_dist = dist
                     best_match = valid_city
         if best_match:

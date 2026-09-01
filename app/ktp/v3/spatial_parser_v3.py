@@ -371,6 +371,14 @@ class SpatialParserV3:
                                 for b in non_sig_boxes:
                                     used_box_ids.add(id(b))
                         full_alamat = " ".join(extra_parts)
+                        # Extract inline RT/RW if combined with address
+                        rtrw_inline = re.search(r'(R[TI][/\s]*RW\s*:?\s*\d+/\d+|\b\d{2,3}/\d{2,3}\b)', full_alamat, re.I)
+                        if rtrw_inline and not extracted_raw["rt_rw"]["val"]:
+                            raw_inline_rtrw = rtrw_inline.group(0)
+                            c_rtrw = clean_rt_rw(raw_inline_rtrw)
+                            if c_rtrw:
+                                extracted_raw["rt_rw"] = {"val": c_rtrw, "conf": round(avg_conf, 1)}
+                                full_alamat = full_alamat.replace(raw_inline_rtrw, "").strip()
                         c_val = tokenize_address(full_alamat)
                         avg_conf = extra_conf_sum / extra_count
                     else:
