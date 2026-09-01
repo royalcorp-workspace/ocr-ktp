@@ -345,9 +345,7 @@ def clean_citizenship(raw_val: Optional[str]) -> Optional[str]:
     return None
 
 
-# ─── Pekerjaan Tokenizer ────────────────────────────────────────────────────────
-# Kamus kata pekerjaan umum KTP, diurutkan panjang → pendek agar greedy
-# longest-match bekerja benar (misal: BURUHHARIANLEPAS → BURUH HARIAN LEPAS).
+
 _PEKERJAAN_VOCAB: List[str] = sorted([
     "BURUH HARIAN LEPAS", "BURUH HARIAN", "BURUH TANI",
     "PELAJAR/MAHASISWA", "PELAJAR", "MAHASISWA",

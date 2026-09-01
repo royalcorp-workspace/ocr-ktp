@@ -16,12 +16,20 @@ class PaddleTextBox:
         self.text = text.strip() if text else ""
         self.confidence = float(confidence) if confidence is not None else 0.0
 
-        # Extract coordinates
+        # Extract coordinates safely for both 2D polygons [[x,y],...] and 1D bounding boxes [x1,y1,x2,y2]
         pts = np.array(box, dtype=np.float32)
-        self.x_min = float(np.min(pts[:, 0]))
-        self.x_max = float(np.max(pts[:, 0]))
-        self.y_min = float(np.min(pts[:, 1]))
-        self.y_max = float(np.max(pts[:, 1]))
+        if pts.ndim == 2 and pts.shape[1] >= 2:
+            self.x_min = float(np.min(pts[:, 0]))
+            self.x_max = float(np.max(pts[:, 0]))
+            self.y_min = float(np.min(pts[:, 1]))
+            self.y_max = float(np.max(pts[:, 1]))
+        elif pts.size >= 4:
+            flat_pts = pts.flatten()
+            self.x_min, self.y_min = float(flat_pts[0]), float(flat_pts[1])
+            self.x_max, self.y_max = float(flat_pts[2]), float(flat_pts[3])
+        else:
+            self.x_min, self.x_max, self.y_min, self.y_max = 0.0, 0.0, 0.0, 0.0
+
         self.center_x = (self.x_min + self.x_max) / 2.0
         self.center_y = (self.y_min + self.y_max) / 2.0
         self.width = max(1.0, self.x_max - self.x_min)
@@ -110,6 +118,7 @@ class PaddleEngineV2:
                 return pts_unscaled.tolist()
             except Exception:
                 return box_coords
+
 
         # Format A: PaddleOCR 3.7 dict format {'rec_texts': [...], 'rec_scores': [...], 'dt_polys': [...]}
         if isinstance(first_item, dict) and "rec_texts" in first_item and "rec_scores" in first_item:
