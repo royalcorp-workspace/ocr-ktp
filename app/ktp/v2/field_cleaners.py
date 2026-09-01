@@ -218,6 +218,9 @@ def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
     for kw in keywords:
         s = re.sub(rf'([A-Za-z]{{3,}})({kw})', r'\1 \2', s)
 
+    # 1b. Fix common OCR typos in address keywords (e.g. MONIYET -> MONYET)
+    s = re.sub(r'\bMONIYET\b', 'MONYET', s)
+
     # 2. Separasi kata BLOK / NO / KP / JL dengan huruf/angka setelahnya
     s = re.sub(r'\bBLOK([A-Z])', r'BLOK \1', s)
     s = re.sub(r'\bNO([A-Z0-9])', r'NO \1', s)
@@ -258,6 +261,10 @@ def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
     # Re-fix formatting seperti BLOK E - 4 -> BLOK E-4, NO 2 A -> NO 2A
     res = re.sub(r'\b([A-Z])\s*-\s*(\d+)\b', r'\1-\2', res)
     res = re.sub(r'\b(\d+)\s+([A-Z])\b', r'\1\2', res)
+    res = re.sub(r'\bMONIYET\b', 'MONYET', res)
+    # Clean redundant period after word (e.g. PERUM. PASIR. SEMBUNG -> PERUM. PASIR SEMBUNG)
+    res = re.sub(r'\b(PASIR|BLOK|KP|JL)\.\s*', r'\1 ', res)
+    res = re.sub(r'\s*\.\s*', '. ', res)
     res = re.sub(r'\s*\.\s*', '. ', res)
     return re.sub(r'\s+', ' ', res).strip()
 

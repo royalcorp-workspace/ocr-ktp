@@ -177,7 +177,7 @@ class SpatialParserV2:
                         city_part = ""
                         date_part = ""
 
-                    c_city = clean_text(city_part)
+                    c_city = normalize_regional(clean_text(city_part))
                     c_date = clean_date(date_part)
 
                     if c_city:
@@ -481,7 +481,8 @@ class SpatialParserV2:
                         "JONIS", "KEIAMIN", "JONIS KEIAMIN", "JENIS KELAMIN"
                     }
                     is_label_noise = bool(re.search(r'\b(J[EO]N[I1]S|KE[IL1]AM[I1][NM]|GOL|DARAH|AGAMA|STATU|PERKAW|PEKERJ|WARGA|BERLAKU|HINGGA|ALAMAT|PROV|KABUP)\b', txt))
-                    if not is_label_noise and txt not in noise_terms:
+                    is_gender_noise = bool(clean_gender(txt) or re.search(r'LAK|PEREMP|WANITA|PRIA', txt.upper()))
+                    if not is_label_noise and not is_gender_noise and txt not in noise_terms:
                         # Guard: bandingkan raw txt DAN tokenized version terhadap nilai nama
                         # Menangkap kasus DEDENKUSMANI (raw) vs DEDEN KUSMANI (nama tersimpan)
                         from app.ktp.v2.field_cleaners import _V2_NAME_LEXICON, tokenize_name
