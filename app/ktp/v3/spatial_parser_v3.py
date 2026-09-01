@@ -5,7 +5,7 @@ from app.ktp.v3.field_cleaners_v3 import (
     clean_text, clean_nik, clean_date, clean_gender,
     clean_blood_type, clean_marital_status, clean_citizenship,
     clean_rt_rw, tokenize_pekerjaan, normalize_regional, tokenize_compound_name,
-    tokenize_name, tokenize_address, _V3_NAME_LEXICON
+    tokenize_name, tokenize_address, extract_date_from_nik, _V3_NAME_LEXICON
 )
 
 # Label Anchor Matrix Patterns with OCR Typo Tolerance for V3
@@ -180,6 +180,15 @@ class SpatialParserV3:
 
                     c_city = normalize_regional(clean_text(city_part))
                     c_date = clean_date(date_part)
+
+                    # Spatial scan on line if date was in a separate box
+                    if not c_date:
+                        for b in line:
+                            if not is_signature_zone(b):
+                                cd = clean_date(b.text)
+                                if cd:
+                                    c_date = cd
+                                    break
 
                     if c_city:
                         extracted_raw["tempat_lahir"] = {"val": c_city, "conf": round(avg_conf, 1)}
@@ -396,6 +405,14 @@ class SpatialParserV3:
 
         # Layer 5: Pattern-Based Field Guesser with Semantic Guards
         self._layer5_pattern_guesser(text_boxes, extracted_raw, h_max, w_max)
+
+        # Fallback 3: Dukcapil Date of Birth Recovery from NIK
+        if not extracted_raw["tanggal_lahir"]["val"] and extracted_raw["nik"]["val"]:
+            nik_val = extracted_raw["nik"]["val"]
+            nik_date = extract_date_from_nik(nik_val)
+            if nik_date:
+                nik_conf = extracted_raw["nik"].get("conf", 95.0)
+                extracted_raw["tanggal_lahir"] = {"val": nik_date, "conf": round(nik_conf, 1)}
 
         return extracted_raw
 

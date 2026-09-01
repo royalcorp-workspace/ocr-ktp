@@ -77,7 +77,7 @@ _V3_NAME_LEXICON: Set[str] = {
     "RIVALDI", "RIVAI", "RIZAL", "RIZKI", "RIZKY", "RIZQ", "ROBERT", "ROBY", "ROBBY",
     "ROCHMAN", "RODI", "ROSLINA", "RODIAT", "ROHMAT", "RONI", "RONNY", "ROSITA", "RUDI",
     "RUDY", "RULI", "RULLY", "RUSLAN", "RUSTAM", "RYAN", "SABAR", "SAEPUDIN", "SAFITRI",
-    "SAID", "SAIFUDDIN", "SALEH", "SALIM", "SALMAN", "SALMANA", "SAMUEL", "SANDI", "SANDRA",
+    "SAID", "SAIFUDDIN", "SALEH", "SALIM", "SALMAN", "SAMUEL", "SANDI", "SANDRA",
     "SANJAYA", "SANTOSO", "SAPUTRA", "SAPUTRI", "SARAH", "SARI", "SARIP", "SARTIKA",
     "SATRIA", "SEPTI", "SEPTIAN", "SEPTIANI", "SEPTIYANTO", "SETIAWAN", "SETIABUDI",
     "SHERLY", "SHINTA", "SILVIA", "SIMON", "SINTA", "SITI", "SOFYAN", "SONI", "SONNY",
@@ -243,11 +243,56 @@ def clean_date(raw_val: Optional[str]) -> Optional[str]:
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
-    match = re.search(r'(\d{2})[\s\-\./]+(\d{2})[\s\-\./]+(\d{4})', s)
+    # Normalize OCR number misreads in date strings (O/D->0, I/L/l/|->1, S->5, B->8, Z->2)
+    s_clean = s.replace('O', '0').replace('D', '0').replace('Q', '0')
+    s_clean = s_clean.replace('I', '1').replace('L', '1').replace('l', '1').replace('|', '1').replace('!', '1')
+    s_clean = s_clean.replace('S', '5').replace('B', '8').replace('Z', '2')
+
+    # Regex match for DD-MM-YYYY or DD MM YYYY or DD/MM/YYYY or DD.MM.YYYY
+    match = re.search(r'(\d{1,2})[\s\-\./]+(\d{1,2})[\s\-\./]+(\d{4})', s_clean)
     if match:
         d, m, y = match.groups()
-        return f"{d}-{m}-{y}"
+        d_int, m_int, y_int = int(d), int(m), int(y)
+        if 1 <= d_int <= 31 and 1 <= m_int <= 12 and 1900 <= y_int <= 2099:
+            return f"{d_int:02d}-{m_int:02d}-{y_int:04d}"
+
+    # Secondary match for 2-digit year (DD-MM-YY)
+    match_2d = re.search(r'(\d{1,2})[\s\-\./]+(\d{1,2})[\s\-\./]+(\d{2})\b', s_clean)
+    if match_2d:
+        d, m, y2 = match_2d.groups()
+        d_int, m_int, y2_int = int(d), int(m), int(y2)
+        if 1 <= d_int <= 31 and 1 <= m_int <= 12:
+            full_y = 1900 + y2_int if y2_int > 30 else 2000 + y2_int
+            return f"{d_int:02d}-{m_int:02d}-{full_y:04d}"
+
     return None
+
+
+def extract_date_from_nik(nik: Optional[str]) -> Optional[str]:
+    """
+    Standard Dukcapil Date of Birth extractor from 16-digit NIK:
+    - Digits 7-8: Day of birth (Female: Day + 40)
+    - Digits 9-10: Month of birth (01-12)
+    - Digits 11-12: Year of birth (2 digits, e.g. 01 -> 2001, 74 -> 1974)
+    """
+    if not nik:
+        return None
+    digits = re.sub(r'[^\d]', '', str(nik))
+    if len(digits) != 16:
+        return None
+    try:
+        raw_day = int(digits[6:8])
+        month = int(digits[8:10])
+        year_2d = int(digits[10:12])
+
+        day = raw_day - 40 if raw_day > 40 else raw_day
+        if not (1 <= day <= 31 and 1 <= month <= 12):
+            return None
+
+        full_year = 1900 + year_2d if year_2d > 30 else 2000 + year_2d
+        return f"{day:02d}-{month:02d}-{full_year:04d}"
+    except Exception:
+        return None
 
 
 def clean_gender(raw_val: Optional[str]) -> Optional[str]:
