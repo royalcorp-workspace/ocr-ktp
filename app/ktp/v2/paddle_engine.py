@@ -60,35 +60,41 @@ class PaddleEngineV2:
         # - enable_mkldnn=False to prevent OneDNN memory leaks (#17955)
         # - use_textline_orientation=False to eliminate extra orientation classification passes
         # - det_limit_side_len=960 for fast DBNet box detection
+        # - rec_batch_num=6 for batched text recognition on CPU SIMD/AVX
         self.ocr = PaddleOCR(
             use_textline_orientation=False,
             lang='en',
             enable_mkldnn=False,
             det_limit_side_len=960,
-            det_db_thresh=0.3
+            det_db_thresh=0.3,
+            rec_batch_num=6
         )
 
     def warmup(self) -> float:
-        """Pre-loads models and warms up C++ execution graph during app startup."""
+        """Pre-loads models and warms up C++ execution graph (detection + recognition) during app startup."""
         import time
         t0 = time.time()
-        dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+        # Create a dummy image with actual text so both Detection and Recognition models are compiled & warmed up
+        dummy_img = np.ones((100, 300, 3), dtype=np.uint8) * 255
+        cv2.putText(dummy_img, "WARMUP KTP 123", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
         self.ocr.ocr(dummy_img)
         return time.time() - t0
 
-    def extract_text_boxes(self, img_bytes: bytes) -> List[PaddleTextBox]:
+    def extract_text_boxes_with_timing(self, img_bytes: bytes) -> Tuple[List[PaddleTextBox], dict]:
         """
-        Executes PaddleOCR on raw image bytes and returns structured text box list.
-        Includes smart downscaling to max 1280px for 60% faster CPU OCR execution.
+        Executes PaddleOCR on raw image bytes and returns structured text box list alongside timing metrics.
+        Includes smart downscaling to max 960px for 60% faster CPU OCR execution.
         """
-        # Decode image bytes to numpy BGR image
+        import time
+        t0 = time.perf_counter()
+
+        # Step 1: Decode image bytes to numpy BGR image
         image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         img_np = np.array(image)
-        # RGB to BGR for OpenCV / PaddleOCR compatibility
         img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        t_decode = time.perf_counter()
 
-        # Smart Image Downscaling for OCR Speed Optimization
-        # Max side target = 960px (preserves 100% KTP text readability while cutting CPU OCR latencies)
+        # Step 2: Smart Image Downscaling for OCR Speed Optimization
         max_side = 960
         h, w = img_bgr.shape[:2]
         max_dim = max(h, w)
@@ -99,16 +105,15 @@ class PaddleEngineV2:
             new_w = max(1, int(w * scale_factor))
             new_h = max(1, int(h * scale_factor))
             img_bgr = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        t_resize = time.perf_counter()
 
+        # Step 3: Execute PaddleOCR Inference (Detection + Recognition)
         results = self.ocr.ocr(img_bgr)
+        t_ocr = time.perf_counter()
+
         text_boxes: List[PaddleTextBox] = []
 
-        if not results:
-            return text_boxes
-
-        first_item = results[0] if isinstance(results, list) and len(results) > 0 else results
-
-        # Helper function to unscale box coordinates back to original image space
+        # Step 4: Unscale bounding box coordinates back to original image space
         def _unscale_box(box_coords):
             if scale_factor == 1.0:
                 return box_coords
@@ -119,32 +124,50 @@ class PaddleEngineV2:
             except Exception:
                 return box_coords
 
+        if results:
+            first_item = results[0] if isinstance(results, list) and len(results) > 0 else results
 
-        # Format A: PaddleOCR 3.7 dict format {'rec_texts': [...], 'rec_scores': [...], 'dt_polys': [...]}
-        if isinstance(first_item, dict) and "rec_texts" in first_item and "rec_scores" in first_item:
-            texts = first_item.get("rec_texts", [])
-            scores = first_item.get("rec_scores", [])
-            polys = first_item.get("dt_polys") if first_item.get("dt_polys") is not None else first_item.get("rec_polys", [])
+            # Format A: PaddleOCR 3.7 dict format {'rec_texts': [...], 'rec_scores': [...], 'dt_polys': [...]}
+            if isinstance(first_item, dict) and "rec_texts" in first_item and "rec_scores" in first_item:
+                texts = first_item.get("rec_texts", [])
+                scores = first_item.get("rec_scores", [])
+                polys = first_item.get("dt_polys") if first_item.get("dt_polys") is not None else first_item.get("rec_polys", [])
 
-            for i in range(min(len(texts), len(scores), len(polys))):
-                txt = str(texts[i]).strip()
-                sc = float(scores[i]) * 100.0 if float(scores[i]) <= 1.0 else float(scores[i])
-                box = _unscale_box(polys[i])
-                if txt:
-                    text_boxes.append(PaddleTextBox(box, txt, sc))
-            return text_boxes
+                for i in range(min(len(texts), len(scores), len(polys))):
+                    txt = str(texts[i]).strip()
+                    sc = float(scores[i]) * 100.0 if float(scores[i]) <= 1.0 else float(scores[i])
+                    box = _unscale_box(polys[i])
+                    if txt:
+                        text_boxes.append(PaddleTextBox(box, txt, sc))
+            else:
+                # Format B: Legacy 2.x tuple format [[box, (text, conf)], ...]
+                items = first_item if isinstance(first_item, list) else [first_item]
+                for item in items:
+                    if not item:
+                        continue
+                    if isinstance(item, (list, tuple)) and len(item) >= 2 and isinstance(item[1], (list, tuple)):
+                        box_coords = _unscale_box(item[0])
+                        text, conf = item[1][0], item[1][1]
+                        sc = float(conf) * 100.0 if float(conf) <= 1.0 else float(conf)
+                        if text and str(text).strip():
+                            text_boxes.append(PaddleTextBox(box_coords, str(text).strip(), sc))
 
-        # Format B: Legacy 2.x tuple format [[box, (text, conf)], ...]
-        items = first_item if isinstance(first_item, list) else [first_item]
-        for item in items:
-            if not item:
-                continue
+        t_unpack = time.perf_counter()
 
-            if isinstance(item, (list, tuple)) and len(item) >= 2 and isinstance(item[1], (list, tuple)):
-                box_coords = _unscale_box(item[0])
-                text, conf = item[1][0], item[1][1]
-                sc = float(conf) * 100.0 if float(conf) <= 1.0 else float(conf)
-                if text and str(text).strip():
-                    text_boxes.append(PaddleTextBox(box_coords, str(text).strip(), sc))
+        timings = {
+            "decode_ms": round((t_resize - t0 - (t_resize - t_decode)) * 1000, 2),
+            "resize_ms": round((t_resize - t_decode) * 1000, 2),
+            "ocr_ms": round((t_ocr - t_resize) * 1000, 2),
+            "unpack_ms": round((t_unpack - t_ocr) * 1000, 2),
+            "total_engine_ms": round((t_unpack - t0) * 1000, 2),
+            "orig_size": f"{w}x{h}",
+            "processed_size": f"{img_bgr.shape[1]}x{img_bgr.shape[0]}",
+            "scale": round(scale_factor, 3),
+        }
 
-        return text_boxes
+        return text_boxes, timings
+
+    def extract_text_boxes(self, img_bytes: bytes) -> List[PaddleTextBox]:
+        """Executes PaddleOCR on raw image bytes and returns structured text box list."""
+        boxes, _ = self.extract_text_boxes_with_timing(img_bytes)
+        return boxes

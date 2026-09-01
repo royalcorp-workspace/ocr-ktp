@@ -11,18 +11,19 @@ services:
     env_file:
       - .env
     environment:
-      - OMP_THREAD_LIMIT=2
-      - OMP_NUM_THREADS=2
-      - OPENBLAS_NUM_THREADS=2
-      - MKL_NUM_THREADS=2
-      - NUMEXPR_NUM_THREADS=2
+      - OMP_THREAD_LIMIT=6
+      - OMP_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - NUMEXPR_NUM_THREADS=4
       - OMP_WAIT_POLICY=PASSIVE
+      - OMP_DYNAMIC=FALSE
     restart: unless-stopped
     deploy:
       resources:
         limits:
+          cpus: '7.5'
+          memory: 8192M
+        reservations:
           cpus: '4.0'
           memory: 2048M
-        reservations:
-          cpus: '2.0'
-          memory: 512M

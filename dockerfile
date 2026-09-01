@@ -5,13 +5,14 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HOST=0.0.0.0 \
     PORT=8011 \
-    # Threading control: set to 2 threads to prevent CPU thrashing under concurrency
-    OMP_THREAD_LIMIT=2 \
-    OMP_NUM_THREADS=2 \
-    OPENBLAS_NUM_THREADS=2 \
-    MKL_NUM_THREADS=2 \
-    NUMEXPR_NUM_THREADS=2 \
-    OMP_WAIT_POLICY=PASSIVE
+    # Threading control: optimized for 8-core CPU
+    OMP_THREAD_LIMIT=6 \
+    OMP_NUM_THREADS=4 \
+    OPENBLAS_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    NUMEXPR_NUM_THREADS=4 \
+    OMP_WAIT_POLICY=PASSIVE \
+    OMP_DYNAMIC=FALSE
  
 WORKDIR /app
 
@@ -35,7 +36,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout=60 --retries=5 --root-user-action=ignore -r requirements.txt
 
 # Pre-download & warm up PaddleOCR models during container build
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_textline_orientation=True, lang='en')"
+RUN python -c "from paddleocr import PaddleOCR; import numpy as np, cv2; ocr = PaddleOCR(use_textline_orientation=False, lang='en', enable_mkldnn=False, det_limit_side_len=960, rec_batch_num=6); img = np.ones((100, 300, 3), dtype=np.uint8) * 255; cv2.putText(img, 'WARMUP', (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2); ocr.ocr(img)"
 
 COPY . .
 
