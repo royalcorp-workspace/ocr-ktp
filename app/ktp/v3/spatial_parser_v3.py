@@ -4,9 +4,9 @@ from app.ktp.v2.paddle_engine import PaddleTextBox
 from app.ktp.v3.field_cleaners_v3 import (
     clean_text, clean_nik, clean_date, clean_gender,
     clean_blood_type, clean_marital_status, clean_citizenship,
-    clean_rt_rw, tokenize_pekerjaan, normalize_regional, tokenize_compound_name,
-    tokenize_name, tokenize_address, extract_date_from_nik, _V3_NAME_LEXICON,
-    _KOTA_KABUPATEN_LEXICON
+    clean_religion, clean_rt_rw, tokenize_pekerjaan, normalize_regional,
+    tokenize_compound_name, tokenize_name, tokenize_address,
+    extract_date_from_nik, _V3_NAME_LEXICON, _KOTA_KABUPATEN_LEXICON
 )
 
 # Label Anchor Matrix Patterns with OCR Typo Tolerance for V3
@@ -23,8 +23,8 @@ LABEL_PATTERNS = {
         r'\bTgl\s*Lahir\b'
     ],
     "jenis_kelamin": [
-        r'J[EO]N[I1]S\s+KE[IL1]AM[I1][NM]',
-        r'JENIS\s+KELAMI[NM]',
+        r'J[EO]N[I1]S\s*KE[IL1]AM[I1][NM]',
+        r'JENIS\s*KELAMI[NM]',
         r'\bKE[IL1]AM[I1][NM]\b',
         r'\bJ[EO]N[I1]S\b',
         r'\bxelamin\b',
@@ -48,12 +48,12 @@ LABEL_PATTERNS = {
     ],
     "agama": [r'\bAGAMA\b'],
     "status_perkawinan": [
-        r'STATUS\s+PERKAWINA[NR]',
-        r'STATUS\s+PERKAWINAN',
+        r'STATUS\s*PERKAWINA[NR]',
+        r'STATUS\s*PERKAWINAN',
         r'\bPERKAWINA[NR]\b',
         r'\bPerkawinan\b'
     ],
-    "pekerjaan": [r'\b(PEKERJAAN|PEKERJA)\b'],
+    "pekerjaan": [r'\b(PEKERJAAN|PEKERJA|PEKENJAAN|PEKENJA)\b'],
     "kewarganegaraan": [r'\b(KEWARGANEGARAAN|KEWARGAN|anegaraan)\b'],
     "berlaku_hingga": [r'.*RLAKU\s*HINGGA', r'.*HINGGA', r'\b[BN]ERLAKU\b', r'\bHingga\b'],
 }
@@ -90,6 +90,85 @@ def extract_inline_value(text: str, label_key: str) -> Optional[str]:
             if val:
                 return val
     return None
+
+
+def is_valid_name_continuation_box(
+    box: PaddleTextBox,
+    anchor_box: PaddleTextBox,
+    label_box: Optional[PaddleTextBox],
+    image_width: float,
+    image_height: float
+) -> bool:
+    """
+    Validates whether an unlabeled box on the next line is a legitimate multi-line name continuation.
+    Supports full names, abbreviations, and 2-letter consonant initials (e.g., 'DS', 'TB', 'ST')
+    while rejecting signature artifacts and stray noise via spatial geometry and confidence gating.
+    """
+    raw_txt = clean_text(box.text).upper()
+    if not raw_txt:
+        return False
+
+    # 1. Spatial Boundary & Column Alignment Guard
+    # a. Tidak boleh berada di zona foto / tanda tangan kanan-bawah
+    if box.x_min > (0.60 * image_width) or box.y_min > (0.50 * image_height):
+        return False
+
+    # b. Tidak boleh masuk ke kolom label di sebelah kiri
+    if label_box and box.x_min < (label_box.x_min + 15.0):
+        return False
+
+    # c. Wajib sejajar dengan titik awal nilai baris pertama (Left Column Alignment)
+    if abs(box.x_min - anchor_box.x_min) > (0.15 * image_width):
+        return False
+
+    # 2. Geometry & Proportionality Constraints
+    box_w = box.x_max - box.x_min
+    box_h = box.y_max - box.y_min
+    if box_h <= 0 or box_w <= 0:
+        return False
+
+    # Coretan garis tipis atau artefak vertikal panjang
+    aspect_ratio = box_w / box_h
+    if aspect_ratio < 0.5:
+        return False
+
+    # Proporsi tinggi terhadap baris pertama (mencegah sliver / noda kecil)
+    anchor_h = anchor_box.y_max - anchor_box.y_min
+    if anchor_h > 0:
+        rel_h = box_h / anchor_h
+        if rel_h < 0.45 or rel_h > 2.0:
+            return False
+
+    # 3. Text & Morphological Validation
+    # Tolak jika mengandung digit angka
+    if re.search(r'\d', raw_txt):
+        return False
+
+    alpha_txt = re.sub(r'[^A-Z]', '', raw_txt)
+    if not alpha_txt:
+        return False
+
+    conf_pct = box.confidence * 100.0 if box.confidence <= 1.0 else box.confidence
+
+    # A. Inisial Tunggal (1 huruf, misal "A", "B", "M.")
+    if len(alpha_txt) == 1:
+        return conf_pct >= 80.0
+
+    # B. Inisial / Singkatan 2 Huruf (Vokal maupun Konsonan: "DS", "ST", "TB", "SE", "DR", "NY")
+    # Syarat: Berupa huruf alfabet murni dengan OCR confidence prima (>= 85.0)
+    if len(alpha_txt) == 2:
+        return conf_pct >= 85.0
+
+    # C. Token Kata Normal (>= 3 karakter)
+    # Wajib memiliki minimal satu huruf vokal dan rasio vokal-konsonan wajar
+    vowel_count = sum(1 for c in alpha_txt if c in "AEIOU")
+    if vowel_count == 0:
+        if alpha_txt in {"MOH", "DRS", "DRA", "SKOM", "MM"}:
+            return True
+        return False
+
+    vowel_ratio = vowel_count / len(alpha_txt)
+    return 0.15 <= vowel_ratio <= 0.85
 
 
 def group_boxes_into_lines(boxes: List[PaddleTextBox]) -> List[List[PaddleTextBox]]:
@@ -225,7 +304,8 @@ class SpatialParserV3:
                 continue
 
             # 2. Compound Line: JENIS KELAMIN & GOL. DARAH
-            if is_label_text(line_str) == "jenis_kelamin" or re.search(r'J[EO]N[I1]S\s+KE[IL1]AM[I1][NM]|JENIS\s+KELAMI[NM]', line_str, re.I):
+            if (is_label_text(line_str) in ("jenis_kelamin", "golongan_darah") 
+                or re.search(r'J[EO]N[I1]S\s*KE[IL1]AM[I1][NM]|JENIS\s*KELAMI[NM]|GOL\.?\s*DARAH', line_str, re.I)):
                 gender_boxes = []
                 blood_boxes = []
                 found_blood_label = False
@@ -308,12 +388,49 @@ class SpatialParserV3:
                     if label_key == "nik":
                         c_val = clean_nik(val_str)
                     elif label_key == "nama":
-                        c_val = tokenize_name(val_str)
+                        line_idx = lines.index(line)
+                        name_parts = [val_str]
+                        name_conf_sum = avg_conf
+                        name_box_count = 1
+                        field_y_anchors["nama"] = box.center_y
+
+                        anchor_box = val_boxes[0] if val_boxes else box
+                        label_box = box
+
+                        # Cek baris berikutnya untuk kelanjutan nama panjang (multi-line name)
+                        if line_idx + 1 < len(lines):
+                            next_line = lines[line_idx + 1]
+                            has_label = any(is_label_text(b.text) for b in next_line)
+                            cur_y = sum(b.center_y for b in line) / len(line)
+                            next_y = sum(b.center_y for b in next_line) / len(next_line)
+
+                            # Jarak vertikal dekat (<= 45px) dan bukan baris berlabel
+                            if not has_label and (0 < next_y - cur_y <= 45.0):
+                                continuation_boxes = [
+                                    b for b in next_line
+                                    if id(b) not in used_box_ids
+                                    and is_valid_name_continuation_box(b, anchor_box, label_box, w_max, h_max)
+                                ]
+                                is_candidate_birth = any(
+                                    clean_date(b.text) or (normalize_regional(clean_text(b.text)) in _KOTA_KABUPATEN_LEXICON)
+                                    for b in continuation_boxes
+                                )
+                                if continuation_boxes and not is_candidate_birth:
+                                    cont_text = " ".join(b.text for b in continuation_boxes)
+                                    name_parts.append(cont_text)
+                                    name_conf_sum += sum(b.confidence for b in continuation_boxes) / len(continuation_boxes)
+                                    name_box_count += 1
+                                    for b in continuation_boxes:
+                                        used_box_ids.add(id(b))
+
+                        full_name = " ".join(name_parts)
+                        c_val = tokenize_name(full_name)
+                        avg_conf = name_conf_sum / name_box_count
                     elif label_key == "rt_rw":
                         c_val = clean_rt_rw(val_str)
                         field_y_anchors["rt_rw"] = box.center_y
                     elif label_key == "agama":
-                        c_val = clean_text(val_str)
+                        c_val = clean_religion(val_str)
                         field_y_anchors["agama"] = box.center_y
                     elif label_key == "status_perkawinan":
                         c_val = clean_marital_status(val_str)
@@ -548,11 +665,12 @@ class SpatialParserV3:
                     used_box_ids.add(id(b))
                     continue
 
-            # 4. Agama
+            # 4. Agama (Clean-before-match dengan 6 agama resmi Dukcapil)
             if not extracted_raw["agama"]["val"]:
-                if txt.upper() in ["ISLAM", "KRISTEN", "KATHOLIK", "HINDU", "BUDDHA", "KHONGHUCU"]:
-                    extracted_raw["agama"] = {"val": txt.upper(), "conf": round(b.confidence, 1)}
-                    assigned_vals.add(txt.upper())
+                c_agama = clean_religion(txt)
+                if c_agama:
+                    extracted_raw["agama"] = {"val": c_agama, "conf": round(b.confidence, 1)}
+                    assigned_vals.add(c_agama)
                     used_box_ids.add(id(b))
                     y_agama = b.center_y
                     continue

@@ -1,7 +1,7 @@
 import re
-from typing import Optional, List, Set
+from typing import Optional, List, Set, Tuple, Dict
 
-# ─── Fast Generic Levenshtein Distance (Standard Library) ──────────────────────
+# ─── Fast Generic Levenshtein & Jaro-Winkler Distance ──────────────────────────
 def levenshtein_distance(s1: str, s2: str) -> int:
     """Calculates edit distance between two strings."""
     if len(s1) < len(s2):
@@ -21,20 +21,75 @@ def levenshtein_distance(s1: str, s2: str) -> int:
     return previous_row[-1]
 
 
+def jaro_winkler_similarity(s1: str, s2: str, prefix_weight: float = 0.1) -> float:
+    """Calculates Jaro-Winkler similarity between two strings."""
+    if s1 == s2:
+        return 1.0
+    len1, len2 = len(s1), len(s2)
+    if len1 == 0 or len2 == 0:
+        return 0.0
+
+    match_distance = max(len1, len2) // 2 - 1
+    if match_distance < 0:
+        match_distance = 0
+
+    s1_matches = [False] * len1
+    s2_matches = [False] * len2
+    matches = 0
+
+    for i in range(len1):
+        start = max(0, i - match_distance)
+        end = min(i + match_distance + 1, len2)
+        for j in range(start, end):
+            if s2_matches[j]:
+                continue
+            if s1[i] != s2[j]:
+                continue
+            s1_matches[i] = True
+            s2_matches[j] = True
+            matches += 1
+            break
+
+    if matches == 0:
+        return 0.0
+
+    t = 0.0
+    k = 0
+    for i in range(len1):
+        if not s1_matches[i]:
+            continue
+        while not s2_matches[k]:
+            k += 1
+        if s1[i] != s2[k]:
+            t += 0.5
+        k += 1
+
+    jaro = (matches / len1 + matches / len2 + (matches - t) / matches) / 3.0
+
+    prefix = 0
+    for i in range(min(4, len1, len2)):
+        if s1[i] == s2[i]:
+            prefix += 1
+        else:
+            break
+
+    return jaro + prefix * prefix_weight * (1.0 - jaro)
+
+
 # ─── Indonesian Name Lexicon ───────────────────────────────────────────────────
 _V3_NAME_LEXICON: Set[str] = {
     "ABADI", "ABDUL", "ABDULLAH", "ADE", "ADAM", "ADI", "ADITA", "ADITYA", "ADRIAN", "AGUS",
     "AGUSTINA", "AGUSTINUS", "AGUNG", "AHMAD", "AINI", "AKBAR", "AKMAD", "ALAM", "ALAMSALAH",
     "ALBERT", "ALDI", "ALEX", "ALEXANDER", "ALFIAN", "ALI", "ALICIA", "ALIF", "ALFI",
     "AMALIA", "AMANDA", "AMBAR", "AMELIA", "AMIN", "AMINAH", "AMIR", "AMANDA", "ANANDA",
-    "ANDI", "ANDIKA", "ANDRE", "ANDRI", "ANDRIAWAN", "ANDRIANI", "ANDRIAN",
+    "ANDI", "ANDIKA", "ANDRE", "ANDRI", "ANDRIAWAN", "ANDRIANI", "ANDRIAN", "ANDRIANUS",
     "ANGGA", "ANGGI", "ANGGRAENI", "ANGGITA", "ANISA", "ANITA", "ANNISA", "ANTON", "ANTONIUS",
     "ANWAR", "APRIANI", "APRILLIA", "APRIYANTO", "AQIL", "ARDHI", "ARDI", "ARDIAN", "ARDIANSYAH",
     "ARIEF", "ARIF", "ARIFIN", "ARIS", "ARI", "ARIYANTO", "ARMA", "ARMAND", "ARMAN", "ARYA",
     "ASRI", "ASTUTI", "ATIN", "AULIA", "AVIAN", "AYU", "AZIZ", "AZIZAH", "BAGUS", "BAHRUDIN",
     "BAMBANG", "BASUKI", "BAYU", "BENNY", "BERTI", "BIMA", "BINTANG", "BUDI", "BUDIMAN",
     "BURHAN", "CAHYO", "CAHYONO", "CHANDRA", "CHRISTIAN", "CHRISTINA", "DANIEL", "DANANG",
-    "DARMA", "DARMAWAN", "DAVID", "DAYAT", "DEDE", "DEDEN", "DEDI", "DELIA", "DENI", "DENNY",
+    "DARMA", "DARMAWAN", "DARMAYANTO", "DAVID", "DEVID", "DAYAT", "DEDE", "DEDEN", "DEDI", "DELIA", "DENI", "DENNY",
     "DESI", "DESSY", "DEVI", "DEVITA", "DEWI", "DHANI", "DIAH", "DIAN", "DIANA", "DICKY",
     "DIDIK", "DIKY", "DINA", "DINDA", "DIRGA", "DITA", "DONI", "DONNY", "DWI", "EKO", "ELI",
     "ELISA", "ELISABETH", "ELSA", "ELVI", "EMMA", "ENDANG", "ERIF", "ERIK", "ERNA", "ERNI",
@@ -80,7 +135,7 @@ _V3_NAME_LEXICON: Set[str] = {
     "SAID", "SAIFUDDIN", "SALEH", "SALIM", "SALMAN", "SAMUEL", "SANDI", "SANDRA",
     "SANJAYA", "SANTOSO", "SAPUTRA", "SAPUTRI", "SARAH", "SARI", "SARIP", "SARTIKA",
     "SATRIA", "SEPTI", "SEPTIAN", "SEPTIANI", "SEPTIYANTO", "SETIAWAN", "SETIABUDI",
-    "SHERLY", "SHINTA", "SILVIA", "SIMON", "SINTA", "SITI", "SOFYAN", "SONI", "SONNY",
+    "SHERLY", "SHINTA", "SILVIA", "SIMON", "SINTA", "SITI", "SOEBARJO", "SOFYAN", "SONI", "SONNY",
     "SRI", "STEFANUS", "STEVEN", "SUBAGYO", "SUCI", "SUCIPTO", "SUGAR", "SUGENG", "SUHARTO",
     "SUJARWO", "SUKMA", "SULAEMAN", "SULASTRI", "SULIS", "SULTAN", "SUMARNI", "SUNARTO",
     "SUPARMAN", "SUPRIADI", "SUPRIYADI", "SUPRIYANTO", "SURYA", "SURYADI", "SURYANA",
@@ -229,16 +284,37 @@ def clean_nik(raw_val: Optional[str]) -> Optional[str]:
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
-    s = re.sub(r'^(NIK|HIK|MIL|N|I|K)[:\s]*', '', s)
+    # Strip label prefix (termasuk variasi OCR seperti NLK, N1K, HIK, NO. NIK, dll)
+    s = re.sub(r'^(NIK|NLK|N1K|HIK|MIL|NO\.?\s*NIK|NO\.?|N|I|K)[:\s\.\-]*', '', s)
     s = s.replace('O', '0').replace('D', '0').replace('Q', '0')
     s = s.replace('I', '1').replace('L', '1').replace('l', '1').replace('|', '1').replace('!', '1')
-    s = s.replace('B', '8').replace('S', '5').replace('Z', '2')
+    s = s.replace('S', '5').replace('Z', '2')
+
+    # Guardrail: Hanya lakukan subtitusi typo lanjutan (A->4, G->6, T->7, B->8)
+    # jika string didominasi digit (jumlah alfabet <= 3 dan terdapat minimal 10 digit)
+    alpha_count = sum(1 for c in s if c.isalpha())
+    digit_count = sum(1 for c in s if c.isdigit())
+    if digit_count >= 10 and alpha_count <= 3:
+        extended_map = {'A': '4', 'G': '6', 'T': '7', 'B': '8'}
+        for char_from, char_to in extended_map.items():
+            s = s.replace(char_from, char_to)
+    else:
+        # Jika bukan kandidat nomor NIK (misal teks biasa seperti BANDUNG), jangan ubah B jadi 8
+        if digit_count >= 6:
+            s = s.replace('B', '8')
+
     digits = re.sub(r'[^\d]', '', s)
     if len(digits) == 16:
         return digits
     elif len(digits) > 16:
+        # Tangani jika ada sisa leading noise 1 digit (misal sisa huruf L/1 di awal)
+        if len(digits) == 17 and digits[0] in {'1', '0'}:
+            if 11 <= int(digits[1:3]) <= 99:
+                return digits[1:17]
         return digits[:16]
-    return digits if digits else None
+    elif len(digits) >= 10:
+        return digits
+    return None
 
 
 def clean_date(raw_val: Optional[str]) -> Optional[str]:
@@ -311,17 +387,35 @@ def clean_gender(raw_val: Optional[str]) -> Optional[str]:
 def clean_blood_type(raw_val: Optional[str]) -> Optional[str]:
     if not raw_val:
         return None
-    s = str(raw_val).upper().strip()
-    s = re.sub(r'^(GOL|DARAH|GOL\.?\s*DARAH)[:\s]*', '', s)
-    s = re.sub(r'[^A-Z]', '', s)
-    if s == 'AB':
-        return 'AB'
-    elif 'A' in s:
-        return 'A'
-    elif 'B' in s:
-        return 'B'
-    elif 'O' in s or '0' in s:
-        return 'O'
+    raw_s = str(raw_val).upper().strip()
+    # 1. Penanganan dash (-) langsung pada raw string sebelum clean_text
+    if re.match(r'^[\-–—\._]+$', raw_s) or raw_s in {"-", "–", "—", "NONE", "TIDAK ADA", "TIDAK TAHU"}:
+        return "-"
+
+    s = clean_text(raw_val)
+    if not s:
+        return None
+    s = s.upper().strip()
+    s = re.sub(r'^(GOL|DARAH|GOL\.?\s*DARAH)[:\s]*', '', s).strip()
+
+    # Cek kembali jika setelah strip prefix hanya tersisa dash
+    if re.match(r'^[\-–—\._]+$', s) or s in {"-", "–", "—", "NONE", "TIDAK ADA", "TIDAK TAHU"}:
+        return "-"
+
+    # 2. Exact match langsung pada token murni (prioritas AB sebelum A atau B)
+    cleaned = re.sub(r'[^ABO0\-]', '', s).replace('0', 'O')
+    if cleaned == "AB":
+        return "AB"
+    elif cleaned in {"A", "B", "O", "-"}:
+        return cleaned
+
+    # 3. Token boundary match (AB selalu dievaluasi sebelum A atau B)
+    if re.search(r'\bAB\b', s):
+        return "AB"
+    for token in ["A", "B", "O"]:
+        if re.search(rf'\b{token}\b', s):
+            return token
+
     return None
 
 
@@ -348,6 +442,52 @@ def clean_citizenship(raw_val: Optional[str]) -> Optional[str]:
         return 'WNI'
     elif 'WNA' in s:
         return 'WNA'
+    return None
+def clean_religion(raw_val: Optional[str]) -> Optional[str]:
+    """
+    Normalisasi nilai Agama sesuai 6 Agama Resmi Standar Dukcapil / Kemendagri:
+    ISLAM, KRISTEN, KATHOLIK, HINDU, BUDDHA, KHONGHUCU.
+    """
+    if not raw_val:
+        return None
+    s = clean_text(raw_val)
+    if not s:
+        return None
+    s = s.upper().strip()
+    s = re.sub(r'^(AGAMA|AGM)[:\s]*', '', s).strip()
+
+    canonical_religions = {
+        "ISLAM": ["ISLAM", "ISLM", "1SLAM", "ISL4M", "SL4M", "SLAM"],
+        "KRISTEN": ["KRISTEN", "KRISEN", "KRISTN", "KR1STEN", "PROTESTAN"],
+        "KATHOLIK": ["KATHOLIK", "KATOLIK", "KATH0LIK", "KAT0LIK", "KATLIK", "CATOLIC"],
+        "HINDU": ["HINDU", "HNDU", "H1NDU"],
+        "BUDDHA": ["BUDDHA", "BUDHA", "BUDDA", "BUDDH4"],
+        "KHONGHUCU": ["KHONGHUCU", "KONGHUCU", "KHONGHUCHU", "KONGHUCHU"]
+    }
+
+    # 1. Exact canonical match
+    if s in canonical_religions:
+        return s
+
+    # 2. Alias exact match
+    for canon, aliases in canonical_religions.items():
+        if s in aliases:
+            return canon
+
+    # 3. Word boundary regex match (prioritaskan nama resmi)
+    for canon, aliases in canonical_religions.items():
+        if re.search(rf'\b{canon}\b', s):
+            return canon
+        for alias in aliases:
+            if re.search(rf'\b{alias}\b', s):
+                return canon
+
+    # 4. Fuzzy Levenshtein distance match (distance <= 2 untuk panjang >= 4)
+    if len(s) >= 4:
+        for canon in canonical_religions:
+            if levenshtein_distance(s, canon) <= 2:
+                return canon
+
     return None
 
 
@@ -539,73 +679,233 @@ def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
     return re.sub(r'\s+', ' ', res).strip()
 
 
+def clean_name_chars(raw_val: str) -> str:
+    """
+    Cleans raw OCR text for person name field:
+    - Strips leading/trailing punctuation noise (: ; _ ~ * -).
+    - Preserves periods in initials and academic/religious titles (M., S.T., IR., H.).
+    - Substitutes common OCR-B alphanumeric confusions (4->A, 1->I, 8->B, 0->O, 5->S)
+      in alphabetic name tokens.
+    """
+    if not raw_val:
+        return ""
+    s = str(raw_val).strip()
+
+    # Strip leading/trailing noise
+    s = re.sub(r'^[^\w\s\.]+', '', s)
+    s = re.sub(r'[^\w\s\.]+$', '', s)
+
+    tokens = s.split()
+    cleaned_tokens: List[str] = []
+
+    leet_map = str.maketrans({
+        "4": "A",
+        "1": "I",
+        "8": "B",
+        "0": "O",
+        "5": "S"
+    })
+
+    for tok in tokens:
+        tok = re.sub(r'[^A-Za-z0-9\.]', '', tok)
+        if not tok:
+            continue
+
+        has_digit = any(c.isdigit() for c in tok)
+        if has_digit:
+            substituted = tok.translate(leet_map)
+            if all(c.isalpha() or c == '.' for c in substituted):
+                tok = substituted
+
+        cleaned_tokens.append(tok.upper())
+
+    res = " ".join(cleaned_tokens)
+    res = re.sub(r'\s*\.\s*', '. ', res)
+    while re.search(r'\b([A-Z])\.\s+([A-Z])\.', res):
+        res = re.sub(r'\b([A-Z])\.\s+([A-Z])\.', r'\1.\2.', res)
+    res = re.sub(r'\b([A-Z])\.\s+(SC|PD|KOM|HUM)\.', r'\1.\2.', res, flags=re.I)
+    res = re.sub(r'\.{2,}', '.', res)
+    return re.sub(r'\s+', ' ', res).strip()
+
+
+def is_valid_phonetic_token(token: str) -> bool:
+    """
+    Validates generic Indonesian phonotactic structure:
+    - Minimal token length check
+    - Presence of vowels
+    - Vowel-to-consonant ratio within natural language range [0.15, 0.85]
+    - No invalid consonant clusters (e.g. 5 consecutive consonants)
+    """
+    if not token:
+        return False
+    t = re.sub(r'[^A-Z]', '', token.upper())
+    if not t:
+        return False
+
+    if len(t) == 1:
+        return True
+
+    if len(t) == 2:
+        return t in _V3_NAME_LEXICON or t in {"DR", "HJ", "SE", "SH", "ST", "MM"}
+
+    vowels = sum(1 for c in t if c in "AEIOU")
+    if vowels == 0:
+        return False
+
+    vowel_ratio = vowels / len(t)
+    if vowel_ratio < 0.15 or vowel_ratio > 0.85:
+        return False
+
+    if re.search(r'[^AEIOU]{5,}', t):
+        return False
+
+    return True
+
+
+def fuzzy_recover_name(token: str, lexicon: Set[str]) -> str:
+    """
+    Controlled fuzzy recovery for OCR character drop and typos:
+    - Strictly preserves short tokens (<= 4 chars) to prevent over-correction.
+    - Requires matching first character and length delta <= 1.
+    - Strict Jaro-Winkler >= 0.92 and Levenshtein <= 1 (or <= 2 for len >= 8).
+    """
+    if not token:
+        return ""
+    base = re.sub(r'[^A-Z]', '', token.upper())
+    if not base or base in lexicon:
+        return token
+
+    if len(base) <= 4:
+        return token
+
+    best_candidate = None
+    min_dist = 99
+    best_jw = 0.0
+
+    for candidate in lexicon:
+        if abs(len(candidate) - len(base)) > 1:
+            continue
+        if candidate[0] != base[0]:
+            continue
+
+        dist = levenshtein_distance(base, candidate)
+        max_allowed_dist = 1 if len(base) <= 7 else 2
+
+        if dist <= max_allowed_dist:
+            jw = jaro_winkler_similarity(base, candidate)
+            if jw >= 0.92:
+                if dist < min_dist or (dist == min_dist and jw > best_jw):
+                    min_dist = dist
+                    best_jw = jw
+                    best_candidate = candidate
+
+    if best_candidate:
+        if token.endswith('.'):
+            return best_candidate + '.'
+        return best_candidate
+
+    return token
+
+
 def tokenize_name(raw_val: Optional[str]) -> Optional[str]:
+    """
+    Stabilized name tokenizer and segmentation:
+    - Cleans glyph confusions and noise characters.
+    - Respects existing space boundaries from OCR (anti-false-segmentation).
+    - Concatenated word boundary recovery via Bilateral Validity (all segments must be valid).
+    - Controlled typo recovery against Indonesian name lexicon.
+    """
     if not raw_val:
         return None
-    s = clean_text(raw_val)
-    if not s:
+    cleaned = clean_name_chars(raw_val)
+    if not cleaned:
         return None
 
     SINGLE_LETTERS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    tokens = s.split()
-    segmented_tokens: List[str] = []
+    tokens = cleaned.split()
+    result_tokens: List[str] = []
+
+    def segment_concatenated_token(tok: str) -> Optional[List[str]]:
+        raw_t = re.sub(r'[^A-Z]', '', tok.upper())
+        if len(raw_t) < 4:
+            return None
+
+        def is_valid_component(s: str) -> Tuple[bool, str, int]:
+            if len(s) == 1 and s in SINGLE_LETTERS:
+                return True, s, 0
+            if s in _V3_NAME_LEXICON:
+                return True, s, 0
+            if len(s) >= 5:
+                rec = fuzzy_recover_name(s, _V3_NAME_LEXICON)
+                if rec in _V3_NAME_LEXICON:
+                    return True, rec, levenshtein_distance(s, rec)
+            return False, s, 99
+
+        memo: Dict[int, Tuple[Optional[List[str]], int]] = {}
+
+        def dp(start: int) -> Tuple[Optional[List[str]], int]:
+            if start == len(raw_t):
+                return [], 0
+            if start in memo:
+                return memo[start]
+
+            best_res: Optional[List[str]] = None
+            best_cost: int = 9999
+
+            for end in range(start + 1, len(raw_t) + 1):
+                sub = raw_t[start:end]
+                if len(sub) == 1 and (start != 0 and end != len(raw_t)):
+                    continue
+
+                valid, resolved, cost = is_valid_component(sub)
+                if valid:
+                    rest, rest_cost = dp(end)
+                    if rest is not None:
+                        total_cost = cost + rest_cost
+                        candidate = [resolved] + rest
+                        if total_cost < best_cost or (total_cost == best_cost and (best_res is None or len(candidate) < len(best_res))):
+                            best_res = candidate
+                            best_cost = total_cost
+
+            memo[start] = (best_res, best_cost)
+            return memo[start]
+
+        parts, cost = dp(0)
+        if parts and len(parts) >= 2:
+            return parts
+        return None
 
     for token in tokens:
-        if len(token) <= 1 or token in _V3_NAME_LEXICON:
-            segmented_tokens.append(token)
+        # Preserve single-letter and 2-letter uppercase initials / abbreviations (e.g. "M", "DS", "TB", "ST", "M.", "S.T.")
+        if re.match(r'^[A-Z]{1,2}\.?$', token) or token in {
+            "DR.", "DRS.", "DRA.", "IR.", "HJ.", "H.", "S.T.", "S.E.", "S.KOM", "M.SC.", "M.M."
+        }:
+            result_tokens.append(token)
             continue
 
-        rem = token
-        sub_tokens: List[str] = []
-        step = 0
-        while rem and step < 20:
-            step += 1
-            if len(rem) >= 4 and rem[-1] in SINGLE_LETTERS and rem[:-1] in _V3_NAME_LEXICON:
-                sub_tokens.append(rem[:-1])
-                sub_tokens.append(rem[-1])
-                rem = ""
-                break
+        base_alpha = re.sub(r'[^A-Z]', '', token.upper())
 
-            direct_match = None
-            for name in sorted(_V3_NAME_LEXICON, key=len, reverse=True):
-                if len(name) > 1 and rem.startswith(name):
-                    direct_match = name
-                    break
+        # If already exactly in lexicon, keep it as-is
+        if base_alpha in _V3_NAME_LEXICON:
+            result_tokens.append(base_alpha)
+            continue
 
-            prefix_match = None
-            prefix_sub_name = None
-            if len(rem) >= 3 and rem[0] in SINGLE_LETTERS:
-                rem_rest = rem[1:]
-                for name in sorted(_V3_NAME_LEXICON, key=len, reverse=True):
-                    if len(name) > 1 and rem_rest.startswith(name):
-                        prefix_match = rem[0]
-                        prefix_sub_name = name
-                        break
+        # If token length is moderate and has valid phonetics, try fuzzy recovery first
+        if len(base_alpha) <= 12 and is_valid_phonetic_token(base_alpha):
+            rec = fuzzy_recover_name(base_alpha, _V3_NAME_LEXICON)
+            if rec in _V3_NAME_LEXICON:
+                result_tokens.append(rec)
+                continue
 
-            if direct_match and prefix_sub_name:
-                if len(direct_match) >= len(prefix_sub_name):
-                    sub_tokens.append(direct_match)
-                    rem = rem[len(direct_match):]
-                else:
-                    sub_tokens.append(prefix_match)
-                    rem = rem[1:]
-            elif direct_match:
-                sub_tokens.append(direct_match)
-                rem = rem[len(direct_match):]
-            elif prefix_match:
-                sub_tokens.append(prefix_match)
-                rem = rem[1:]
-            elif len(rem) == 1 and rem[0] in SINGLE_LETTERS:
-                sub_tokens.append(rem[0])
-                rem = ""
-                break
-            else:
-                sub_tokens.append(rem)
-                break
+        # Try bilateral concatenated segmentation
+        segmented = segment_concatenated_token(token)
+        if segmented:
+            result_tokens.extend(segmented)
+        else:
+            rec = fuzzy_recover_name(base_alpha, _V3_NAME_LEXICON)
+            result_tokens.append(rec)
 
-        segmented_tokens.append(" ".join(sub_tokens))
-
-    res = " ".join(segmented_tokens)
+    res = " ".join(result_tokens)
     return re.sub(r'\s+', ' ', res).strip()
 
 
