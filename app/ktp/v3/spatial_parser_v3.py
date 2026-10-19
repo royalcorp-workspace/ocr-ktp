@@ -31,7 +31,7 @@ LABEL_PATTERNS = {
         r'\bkelamin\b'
     ],
     "golongan_darah": [r'GOL\.?\s*DARAH', r'\bDARAH\b', r'\bGOL\b'],
-    "alamat": [r'\b(ALAMAT|ALAMA|ALMT)\b'],
+    "alamat": [r'\b(A[L1I]?AMAT?|AAMAT|ALMT)\b'],
     "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW|RI/RW|RT/RV|RT/PW|T/RW)\b'],
     "kelurahan_desa": [
         r'KE[LV1I/|]\s*[/.\s]?\s*DESA',
@@ -110,7 +110,7 @@ def is_valid_name_continuation_box(
 
     # 1. Spatial Boundary & Column Alignment Guard
     # a. Tidak boleh berada di zona foto / tanda tangan kanan-bawah
-    if box.x_min > (0.60 * image_width) or box.y_min > (0.50 * image_height):
+    if box.x_min > (0.60 * image_width) and box.y_min > (0.50 * image_height):
         return False
 
     # b. Tidak boleh masuk ke kolom label di sebelah kiri
@@ -309,12 +309,14 @@ class SpatialParserV3:
                 gender_boxes = []
                 blood_boxes = []
                 found_blood_label = False
+                blood_label_conf = 0.0
 
                 for b in line:
-                    if is_signature_zone(b):
+                    if is_signature_zone(b) and not ("GOL" in b.text.upper() or is_label_text(b.text) == "golongan_darah"):
                         continue
                     if is_label_text(b.text) == "golongan_darah" or "GOL" in b.text.upper():
                         found_blood_label = True
+                        blood_label_conf = b.confidence
                         used_box_ids.add(id(b))
                         inline_b = extract_inline_value(b.text, "golongan_darah")
                         if inline_b:
@@ -353,6 +355,11 @@ class SpatialParserV3:
                         extracted_raw["golongan_darah"] = {"val": c_b, "conf": round(b_conf, 1)}
                     for b in blood_boxes:
                         used_box_ids.add(id(b))
+
+                # Dukcapil Defaulting: Jika label Gol. Darah terdeteksi namun tidak ada nilai box / nilai kosong di kanannya
+                if found_blood_label and not extracted_raw["golongan_darah"]["val"]:
+                    conf_val = blood_label_conf * 100.0 if (blood_label_conf and blood_label_conf <= 1.0) else (blood_label_conf or 90.0)
+                    extracted_raw["golongan_darah"] = {"val": "-", "conf": round(conf_val, 1)}
                 continue
 
             # 3. Standard Single-Field Labels
@@ -396,36 +403,51 @@ class SpatialParserV3:
 
                         anchor_box = val_boxes[0] if val_boxes else box
                         label_box = box
+                        anchor_h = (anchor_box.y_max - anchor_box.y_min) if anchor_box else 20.0
+                        max_delta_y = max(24.0, 1.6 * anchor_h)
 
-                        # Cek baris berikutnya untuk kelanjutan nama panjang (multi-line name)
-                        if line_idx + 1 < len(lines):
-                            next_line = lines[line_idx + 1]
+                        # Loop terkontrol untuk kelanjutan nama hingga baris ke-3 (maks 2 kelanjutan)
+                        cur_line_y = sum(b.center_y for b in line) / len(line)
+                        check_idx = line_idx + 1
+                        max_continuation_lines = 2
+                        continuation_count = 0
+
+                        while check_idx < len(lines) and continuation_count < max_continuation_lines:
+                            next_line = lines[check_idx]
                             has_label = any(is_label_text(b.text) for b in next_line)
-                            cur_y = sum(b.center_y for b in line) / len(line)
-                            next_y = sum(b.center_y for b in next_line) / len(next_line)
+                            if has_label:
+                                break
 
-                            # Jarak vertikal dekat (<= 45px) dan bukan baris berlabel
-                            if not has_label and (0 < next_y - cur_y <= 45.0):
-                                continuation_boxes = [
-                                    b for b in next_line
-                                    if id(b) not in used_box_ids
-                                    and is_valid_name_continuation_box(b, anchor_box, label_box, w_max, h_max)
-                                ]
-                                is_candidate_birth = any(
-                                    clean_date(b.text) or (normalize_regional(clean_text(b.text)) in _KOTA_KABUPATEN_LEXICON)
-                                    for b in continuation_boxes
-                                )
-                                if continuation_boxes and not is_candidate_birth:
-                                    cont_text = " ".join(b.text for b in continuation_boxes)
-                                    name_parts.append(cont_text)
-                                    name_conf_sum += sum(b.confidence for b in continuation_boxes) / len(continuation_boxes)
-                                    name_box_count += 1
-                                    for b in continuation_boxes:
-                                        used_box_ids.add(id(b))
+                            next_y = sum(b.center_y for b in next_line) / len(next_line)
+                            delta_y = next_y - cur_line_y
+                            if delta_y <= 0 or delta_y > max_delta_y:
+                                break
+
+                            continuation_boxes = [
+                                b for b in next_line
+                                if id(b) not in used_box_ids
+                                and is_valid_name_continuation_box(b, anchor_box, label_box, w_max, h_max)
+                            ]
+                            is_candidate_birth = any(
+                                clean_date(b.text) or (normalize_regional(clean_text(b.text)) in _KOTA_KABUPATEN_LEXICON)
+                                for b in continuation_boxes
+                            )
+                            if continuation_boxes and not is_candidate_birth:
+                                cont_text = " ".join(b.text for b in continuation_boxes)
+                                name_parts.append(cont_text)
+                                name_conf_sum += sum(b.confidence for b in continuation_boxes) / len(continuation_boxes)
+                                name_box_count += 1
+                                for b in continuation_boxes:
+                                    used_box_ids.add(id(b))
+                                cur_line_y = next_y
+                                continuation_count += 1
+                                check_idx += 1
+                            else:
+                                break
 
                         full_name = " ".join(name_parts)
-                        c_val = tokenize_name(full_name)
                         avg_conf = name_conf_sum / name_box_count
+                        c_val = tokenize_name(full_name, confidence=avg_conf)
                     elif label_key == "rt_rw":
                         c_val = clean_rt_rw(val_str)
                         field_y_anchors["rt_rw"] = box.center_y
@@ -473,12 +495,15 @@ class SpatialParserV3:
                         extra_conf_sum = avg_conf
                         extra_count = 1
                         field_y_anchors["alamat"] = box.center_y
+                        anchor_h = (val_boxes[0].height if val_boxes else box.height)
+                        max_alamat_delta_y = max(35.0, 2.5 * anchor_h)
+                        cur_line_y = sum(b.center_y for b in line) / len(line)
                         for next_line in lines[line_idx + 1:]:
                             if any(is_label_text(b.text) for b in next_line):
                                 break
                             next_avg_y = sum(b.center_y for b in next_line) / len(next_line)
-                            cur_avg_y = sum(b.center_y for b in line) / len(line)
-                            if next_avg_y - cur_avg_y > 80:
+                            delta_y = next_avg_y - cur_line_y
+                            if delta_y <= 0 or delta_y > max_alamat_delta_y:
                                 break
                             non_sig_boxes = [b for b in next_line if not is_signature_zone(b)]
                             if non_sig_boxes:
@@ -487,6 +512,7 @@ class SpatialParserV3:
                                 extra_count += 1
                                 for b in non_sig_boxes:
                                     used_box_ids.add(id(b))
+                                cur_line_y = next_avg_y
                         full_alamat = " ".join(extra_parts)
                         # Extract inline RT/RW if combined with address
                         rtrw_inline = re.search(r'(R[TI][/\s]*RW\s*:?\s*\d+/\d+|\b\d{2,3}/\d{2,3}\b)', full_alamat, re.I)
@@ -660,8 +686,9 @@ class SpatialParserV3:
             # 3. Alamat
             if not extracted_raw["alamat"]["val"]:
                 if re.match(r'^(KP\.|JL\.|KMP\.|PERUM\.|GG\.|DSN\.|BLOK|KP\s|JL\s)', txt, re.I):
-                    extracted_raw["alamat"] = {"val": txt, "conf": round(b.confidence, 1)}
-                    assigned_vals.add(txt)
+                    c_alamat = tokenize_address(txt) or txt
+                    extracted_raw["alamat"] = {"val": c_alamat, "conf": round(b.confidence, 1)}
+                    assigned_vals.add(c_alamat)
                     used_box_ids.add(id(b))
                     continue
 

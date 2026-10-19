@@ -83,11 +83,12 @@ async def security_headers_middleware(request: Request, call_next):
         request_id_var.reset(token)
 
 
-from app.api import v1_routes, v2_routes, v3_routes
+from app.api import v1_routes, v2_routes, v3_routes, v4_routes
 app.include_router(ktp_routes.router)
 app.include_router(v1_routes.router)
 app.include_router(v2_routes.router)
 app.include_router(v3_routes.router)
+app.include_router(v4_routes.router)
 
 
 @app.get("/health", tags=["health"])

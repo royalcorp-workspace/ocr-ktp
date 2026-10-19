@@ -89,11 +89,11 @@ _V3_NAME_LEXICON: Set[str] = {
     "ASRI", "ASTUTI", "ATIN", "AULIA", "AVIAN", "AYU", "AZIZ", "AZIZAH", "BAGUS", "BAHRUDIN",
     "BAMBANG", "BASUKI", "BAYU", "BENNY", "BERTI", "BIMA", "BINTANG", "BUDI", "BUDIMAN",
     "BURHAN", "CAHYO", "CAHYONO", "CHANDRA", "CHRISTIAN", "CHRISTINA", "DANIEL", "DANANG",
-    "DARMA", "DARMAWAN", "DARMAYANTO", "DAVID", "DEVID", "DAYAT", "DEDE", "DEDEN", "DEDI", "DELIA", "DENI", "DENNY",
+    "DARMA", "DARMAWAN", "DARMAYANTO", "DAMAYANTO", "DAVID", "DEVID", "DAYAT", "DEDE", "DEDEN", "DEDI", "DELIA", "DENI", "DENNY",
     "DESI", "DESSY", "DEVI", "DEVITA", "DEWI", "DHANI", "DIAH", "DIAN", "DIANA", "DICKY",
     "DIDIK", "DIKY", "DINA", "DINDA", "DIRGA", "DITA", "DONI", "DONNY", "DWI", "EKO", "ELI",
     "ELISA", "ELISABETH", "ELSA", "ELVI", "EMMA", "ENDANG", "ERIF", "ERIK", "ERNA", "ERNI",
-    "ERWIN", "EVA", "EVI", "FACHRI", "FADLI", "FAIRUZ", "FAISAL", "FAJAR", "FAJRI", "FANNY",
+    "ERWIN", "EVA", "EVI", "FACHRI", "FADLI", "FAHMI", "FAIRUZ", "FAISAL", "FAJAR", "FAJRI", "FANNY",
     "FARAH", "FARHAN", "FARID", "FARIDA", "FEBRI", "FEBRIANI", "FEBRIANTO", "FEBY", "FELIX",
     "FERDI", "FERDIAN", "FERDINAND", "FERRY", "FIKRI", "FINA", "FITRI", "FITRIA", "FITRIANI",
     "FRANS", "FRANSISKA", "GABRIEL", "GALANG", "GALIH", "GANI", "GILANG", "GITA", "GRACE",
@@ -103,7 +103,7 @@ _V3_NAME_LEXICON: Set[str] = {
     "HASANUDDIN", "HASTUTI", "HENDRA", "HENDRI", "HENDRIK", "HENDRO", "HERI", "HERIANTO",
     "HERMAN", "HERMANSYAH", "HERU", "HIDAYAT", "HIDAYATULLOH", "HIDAYATULLAH", "HILMAN",
     "HIDAYATI", "HUSEN", "HUSIN", "HUSNA", "IBRAHIM", "IDA", "IGNATIUS", "IIN", "IKBAL",
-    "ILHAM", "IMAM", "IMAN", "IMMANUEL", "INDAH", "INDRA", "INDIRA", "INDRI", "INDRIANI",
+    "ILHAM", "ILMAWAN", "IMAM", "IMAN", "IMMANUEL", "INDAH", "INDRA", "INDIRA", "INDRI", "INDRIANI",
     "IRFAN", "IRMA", "IRWAN", "IRWANSYAH", "ISMAIL", "ISNA", "ISNAINI", "IVA", "IVAN",
     "IWAN", "IZZA", "JAENAL", "JAFFAR", "JAMAL", "JEFRI", "JEFRY", "JOHAN", "JOHANES",
     "JOKO", "JOSEPH", "JOSUA", "JULIA", "JULIAN", "JULIANA", "JULIANTO", "JUNAEDI",
@@ -143,7 +143,7 @@ _V3_NAME_LEXICON: Set[str] = {
     "SYAMSUL", "SYARIF", "TANIA", "TAUFIC", "TAUFIK", "TEDI", "TEDDY", "TEGUH", "TIA",
     "TIARA", "TINI", "TITA", "TITIN", "TOMI", "TOMMY", "TRI", "TRIA", "TRIYANTO", "TUTI",
     "UDIN", "UTAMI", "UTOM", "UTOMO", "UTU", "VALENTINO", "VERA", "VERONICA", "VICTOR",
-    "VINA", "VINCENT", "VIONA", "VITA", "VIVI", "WAHYU", "WAHYUDI", "WALUYO", "WATI",
+    "VINA", "VINCENT", "VIONA", "VITA", "VIVI", "WAHYU", "WAHYUDI", "WALUYO", "WARDHANA", "WATI",
     "WENI", "WIBOWO", "WIDA", "WIDIA", "WIDODO", "WIDYA", "WIGUNA", "WIJAYA", "WINDA",
     "WINDY", "WINARTO", "WISNU", "WULAN", "YANA", "YANI", "YANTO", "YARI",
     "YASMIN", "YAYAT", "YENI", "YENNY", "YOPI", "YOSEP", "YOSEPH", "YOSUA", "YUDHA",
@@ -224,7 +224,7 @@ _KOTA_KABUPATEN_LEXICON: Set[str] = {
     "TIMOR TENGAH UTARA", "TOBA", "TOJO UNA-UNA", "TOLI-TOLI", "TOLIKARA", "TOMOHON", "TORAJA UTARA",
     "TRENGGALEK", "TUBAN", "TULANG BAWANG", "TULANG BAWANG BARAT", "TULUNGAGUNG", "WAJO", "WAKATOBI",
     "WAROPEN", "WAY KANAN", "WONOGIRI", "WONOSOBO", "YAHUKIMO", "YALIMO", "YOGYAKARTA",
-    "RANCAEKEK", "CILAKU", "CICALENGKA", "CIPARAY", "CIBIRU", "SOREANG", "LEMBANG", "PARIGI",
+    "RANCAEKEK", "CILAKU", "CICALENGKA", "CIPARAY", "CIPATAT", "CIBIRU", "SOREANG", "LEMBANG", "PARIGI",
     "JATISARI", "JELEGONG", "SIRNAGALIH", "SUKAMULYA", "SUKA MULYA", "BOJONGSALAM", "BOJONG SALAM"
 }
 
@@ -541,7 +541,11 @@ def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
     """
     if not raw_val:
         return None
-    s = str(raw_val).upper().strip()
+    s = str(raw_val).upper().strip().lstrip(':').strip()
+    if re.search(r'BELUM\s*/?\s*TIDAK\s*BEKERJA', s):
+        return "BELUM/TIDAK BEKERJA"
+    if re.search(r'PELAJAR\s*/?\s*MAHASISWA', s):
+        return "PELAJAR/MAHASISWA"
     if '/' in s:
         return s
 
@@ -807,13 +811,15 @@ def fuzzy_recover_name(token: str, lexicon: Set[str]) -> str:
     return token
 
 
-def tokenize_name(raw_val: Optional[str]) -> Optional[str]:
+def tokenize_name(raw_val: Optional[str], confidence: Optional[float] = None) -> Optional[str]:
     """
     Stabilized name tokenizer and segmentation:
     - Cleans glyph confusions and noise characters.
     - Respects existing space boundaries from OCR (anti-false-segmentation).
-    - Concatenated word boundary recovery via Bilateral Validity (all segments must be valid).
-    - Controlled typo recovery against Indonesian name lexicon.
+    - Concatenated word boundary recovery via Bilateral Validity.
+    - Conservative Anti-Mutation: Preserves phonetically valid names with high confidence
+      (e.g., 'DAMAYANTO') without forcing artificial lexicon mutations.
+    - Controlled typo recovery against Indonesian name lexicon for degraded tokens.
     """
     if not raw_val:
         return None
@@ -838,7 +844,8 @@ def tokenize_name(raw_val: Optional[str]) -> Optional[str]:
             if len(s) >= 5:
                 rec = fuzzy_recover_name(s, _V3_NAME_LEXICON)
                 if rec in _V3_NAME_LEXICON:
-                    return True, rec, levenshtein_distance(s, rec)
+                    resolved = s if (is_valid_phonetic_token(s) and (confidence is None or confidence >= 90.0)) else rec
+                    return True, resolved, levenshtein_distance(s, rec)
             return False, s, 99
 
         memo: Dict[int, Tuple[Optional[List[str]], int]] = {}
@@ -890,20 +897,22 @@ def tokenize_name(raw_val: Optional[str]) -> Optional[str]:
             result_tokens.append(base_alpha)
             continue
 
-        # If token length is moderate and has valid phonetics, try fuzzy recovery first
-        if len(base_alpha) <= 12 and is_valid_phonetic_token(base_alpha):
-            rec = fuzzy_recover_name(base_alpha, _V3_NAME_LEXICON)
-            if rec in _V3_NAME_LEXICON:
-                result_tokens.append(rec)
-                continue
-
         # Try bilateral concatenated segmentation
         segmented = segment_concatenated_token(token)
         if segmented:
             result_tokens.extend(segmented)
-        else:
-            rec = fuzzy_recover_name(base_alpha, _V3_NAME_LEXICON)
-            result_tokens.append(rec)
+            continue
+
+        # Conservative anti-mutation: If token is already phonetically valid
+        # and has high confidence (or default when not degraded), preserve physical spelling (e.g. DAMAYANTO)
+        if is_valid_phonetic_token(base_alpha):
+            if confidence is None or confidence >= 90.0:
+                result_tokens.append(base_alpha)
+                continue
+
+        # Otherwise attempt controlled fuzzy recovery for phonetically degraded or low-confidence tokens
+        rec = fuzzy_recover_name(base_alpha, _V3_NAME_LEXICON)
+        result_tokens.append(rec)
 
     res = " ".join(result_tokens)
     return re.sub(r'\s+', ' ', res).strip()
