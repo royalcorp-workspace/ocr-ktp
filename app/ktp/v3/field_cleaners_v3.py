@@ -78,7 +78,7 @@ def jaro_winkler_similarity(s1: str, s2: str, prefix_weight: float = 0.1) -> flo
 
 # ─── Indonesian Name Lexicon ───────────────────────────────────────────────────
 _V3_NAME_LEXICON: Set[str] = {
-    "ABADI", "ABDUL", "ABDULLAH", "ADE", "ADAM", "ADI", "ADITA", "ADITYA", "ADRIAN", "AGUS",
+    "ABADI", "ABDUL", "ABDULLAH", "ABDURAHMAN", "ABDURRAHMAN", "ACEP", "ADE", "ADAM", "ADI", "ADITA", "ADITYA", "ADRIAN", "AGUS",
     "AGUSTINA", "AGUSTINUS", "AGUNG", "AHMAD", "AINI", "AKBAR", "AKMAD", "ALAM", "ALAMSALAH",
     "ALBERT", "ALDI", "ALEX", "ALEXANDER", "ALFIAN", "ALI", "ALICIA", "ALIF", "ALFI",
     "AMALIA", "AMANDA", "AMBAR", "AMELIA", "AMIN", "AMINAH", "AMIR", "AMANDA", "ANANDA",
@@ -120,7 +120,7 @@ _V3_NAME_LEXICON: Set[str] = {
     "MUTIA", "MUTIARA", "NADIA", "NABILA", "NADYA", "NANA", "NANDAR", "NANANG", "NASRULLAH",
     "NASUTION", "NATALIA", "NAVAL", "NAUFAL", "NAWI", "NILA", "NINA", "NINDYA", "NITA",
     "NOFI", "NOPRI", "NOVAL", "NOVIA", "NOVIANI", "NOVIANTO", "NOVITA", "NUGROHO", "NUR",
-    "NURAENI", "NURUL", "NURHADI", "NURHASANAH", "NURHAYATI", "NURDIN", "OKTA", "OKTAVIA",
+    "NURAENI", "NUROHIM", "NURUL", "NURHADI", "NURHASANAH", "NURHAYATI", "NURDIN", "OKTA", "OKTAVIA",
     "OKTAVIANI", "OKTAVIANUS", "PANJI", "PARKESIT", "PADIL", "PAUD", "PAULUS", "PETRUS",
     "PRADANA", "PRAKOSO", "PRASETYO", "PRATAMA", "PRATIWI", "PRAYOGO", "PRIYANTO", "PUJI",
     "PURWANTO", "PURWANTI", "PUTRA", "PUTRI", "RACHMAN", "RACHMAT", "RADEN", "RAHMAD",
@@ -130,7 +130,7 @@ _V3_NAME_LEXICON: Set[str] = {
     "RIDWAN", "RIEKY", "RIFKI", "RIFKHI", "RIKI", "RIKY", "RIMA", "RINA", "RINDRA", "RINI",
     "RIO", "RISA", "RISHAD", "RISKA", "RISKI", "RISMA", "RISNANDAR", "RISKY", "RITA",
     "RIVALDI", "RIVAI", "RIZAL", "RIZKI", "RIZKY", "RIZQ", "ROBERT", "ROBY", "ROBBY",
-    "ROCHMAN", "RODI", "ROSLINA", "RODIAT", "ROHMAT", "RONI", "RONNY", "ROSITA", "RUDI",
+    "ROCHMAN", "RODI", "ROSLINA", "RODIAT", "ROHIM", "ROHMAT", "RONI", "RONNY", "ROSITA", "RUDI",
     "RUDY", "RULI", "RULLY", "RUSLAN", "RUSTAM", "RYAN", "SABAR", "SAEPUDIN", "SAFITRI",
     "SAID", "SAIFUDDIN", "SALEH", "SALIM", "SALMAN", "SAMUEL", "SANDI", "SANDRA",
     "SANJAYA", "SANTOSO", "SAPUTRA", "SAPUTRI", "SARAH", "SARI", "SARIP", "SARTIKA",
@@ -225,8 +225,19 @@ _KOTA_KABUPATEN_LEXICON: Set[str] = {
     "TRENGGALEK", "TUBAN", "TULANG BAWANG", "TULANG BAWANG BARAT", "TULUNGAGUNG", "WAJO", "WAKATOBI",
     "WAROPEN", "WAY KANAN", "WONOGIRI", "WONOSOBO", "YAHUKIMO", "YALIMO", "YOGYAKARTA",
     "RANCAEKEK", "CILAKU", "CICALENGKA", "CIPARAY", "CIPATAT", "CIBIRU", "SOREANG", "LEMBANG", "PARIGI",
-    "JATISARI", "JELEGONG", "SIRNAGALIH", "SUKAMULYA", "SUKA MULYA", "BOJONGSALAM", "BOJONG SALAM"
+    "JATISARI", "JELEGONG", "SIRNAGALIH", "SUKAMULYA", "SUKA MULYA", "BOJONGSALAM", "BOJONG SALAM",
+    "PADALARANG", "LAKSANA MEKAR", "CIPEUNDEUY", "NGAMPRAH", "NGAMPRAH KIDUL",
+    "KUTA SELATAN", "MEDAN BARAT", "KAYU AGUNG", "PASIR SEMBUNG"
 }
+
+
+# Pre-compiled Whitespace-Invariant Canonical Regional Hash Map
+_CANONICAL_REGIONAL_MAP: Dict[str, str] = {}
+for _entry in sorted(_KOTA_KABUPATEN_LEXICON, key=lambda x: (len(x), ' ' in x), reverse=True):
+    _key = re.sub(r'[^A-Z0-9]', '', _entry.upper())
+    if _key and _key not in _CANONICAL_REGIONAL_MAP:
+        _CANONICAL_REGIONAL_MAP[_key] = _entry
+
 
 
 # ─── Address Keywords Lexicon ──────────────────────────────────────────────────
@@ -273,11 +284,32 @@ def clean_rt_rw(raw_val: Optional[str]) -> Optional[str]:
     s = clean_text(raw_val)
     if not s:
         return None
+    s = strip_field_label_prefix(s, "rt_rw") or s
     s = re.sub(r'\s*/\s*', '/', s)
     # Generic OCR digit loop-closure recovery (leading 60x -> 00x in 3-digit format)
     s = re.sub(r'\b60(\d)\b', r'00\1', s)
     s = re.sub(r'/60(\d)\b', r'/00\1', s)
-    return s if s else None
+
+    # Closed-set 3-digit Dukcapil extraction:
+    # Match 1-3 digits / 1-3 digits with slash separator (tolerating /RW.)
+    from app.ktp.extractor.common import DIGIT_MAP
+    match = re.search(r'([0-9OolI|!sSZzBbGqUcD]{1,3})\s*(?:/\s*(?:RW[.:\s]*)?|[/|\\])\s*([0-9OolI|!sSZzBbGqUcD]{1,3})', s, re.IGNORECASE)
+    if match:
+        rt_raw, rw_raw = match.groups()
+        if not any(c.isdigit() for c in rt_raw + rw_raw):
+            return None
+        rt_corr = "".join(DIGIT_MAP.get(c, c) for c in rt_raw)
+        rw_corr = "".join(DIGIT_MAP.get(c, c) for c in rw_raw)
+        if len(rt_corr) == 3 and rt_corr.startswith("8"):
+            rt_corr = "0" + rt_corr[1:]
+        if len(rw_corr) == 3 and rw_corr.startswith("8"):
+            rw_corr = "0" + rw_corr[1:]
+        if rt_corr.isdigit() and rw_corr.isdigit():
+            return f"{int(rt_corr):03d}/{int(rw_corr):03d}"
+    return None
+
+
+
 
 
 def clean_nik(raw_val: Optional[str]) -> Optional[str]:
@@ -351,32 +383,19 @@ def extract_date_from_nik(nik: Optional[str]) -> Optional[str]:
     Standard Dukcapil Date of Birth extractor from 16-digit NIK:
     - Digits 7-8: Day of birth (Female: Day + 40)
     - Digits 9-10: Month of birth (01-12)
-    - Digits 11-12: Year of birth (2 digits, e.g. 01 -> 2001, 74 -> 1974)
+    - Digits 11-12: Year of birth (2 digits)
+    Strict calendar validation (datetime.date).
     """
-    if not nik:
-        return None
-    digits = re.sub(r'[^\d]', '', str(nik))
-    if len(digits) != 16:
-        return None
-    try:
-        raw_day = int(digits[6:8])
-        month = int(digits[8:10])
-        year_2d = int(digits[10:12])
+    from app.ktp.extractor.validators import derive_dob_from_nik
+    return derive_dob_from_nik(nik)
 
-        day = raw_day - 40 if raw_day > 40 else raw_day
-        if not (1 <= day <= 31 and 1 <= month <= 12):
-            return None
-
-        full_year = 1900 + year_2d if year_2d > 30 else 2000 + year_2d
-        return f"{day:02d}-{month:02d}-{full_year:04d}"
-    except Exception:
-        return None
 
 
 def clean_gender(raw_val: Optional[str]) -> Optional[str]:
     if not raw_val:
         return None
-    s = str(raw_val).upper()
+    s = strip_field_label_prefix(str(raw_val), "jenis_kelamin") or str(raw_val)
+    s = s.upper()
     if 'LAKI' in s or 'LAK' in s or 'PRIA' in s or 'PERIA' in s:
         return 'LAKI-LAKI'
     elif 'PEREMP' in s or 'PEREM' in s or 'WANITA' in s:
@@ -422,7 +441,8 @@ def clean_blood_type(raw_val: Optional[str]) -> Optional[str]:
 def clean_marital_status(raw_val: Optional[str]) -> Optional[str]:
     if not raw_val:
         return None
-    s = str(raw_val).upper()
+    s = strip_field_label_prefix(str(raw_val), "status_perkawinan") or str(raw_val)
+    s = s.upper()
     if 'BELUM' in s:
         return 'BELUM KAWIN'
     elif 'KAWIN' in s or 'KAW' in s:
@@ -437,7 +457,8 @@ def clean_marital_status(raw_val: Optional[str]) -> Optional[str]:
 def clean_citizenship(raw_val: Optional[str]) -> Optional[str]:
     if not raw_val:
         return None
-    s = str(raw_val).upper()
+    s = strip_field_label_prefix(str(raw_val), "kewarganegaraan") or str(raw_val)
+    s = s.upper()
     if 'WNI' in s or 'INDONESIA' in s:
         return 'WNI'
     elif 'WNA' in s:
@@ -454,6 +475,7 @@ def clean_religion(raw_val: Optional[str]) -> Optional[str]:
     if not s:
         return None
     s = s.upper().strip()
+    s = strip_field_label_prefix(s, "agama") or s
     s = re.sub(r'^(AGAMA|AGM)[:\s]*', '', s).strip()
 
     canonical_religions = {
@@ -491,42 +513,125 @@ def clean_religion(raw_val: Optional[str]) -> Optional[str]:
     return None
 
 
+# ─── Administrative Header Detector ───────────────────────────────────────────
+_ADMIN_HEADER_PREFIXES = (
+    "PROVINSI", "REPUBLIKINDONESIA", "KABUPATEN", "KOTA", "PEMERINTAH", "PEMKAB", "PEMKOT"
+)
+ADMIN_HEADER_REGEX = re.compile(
+    r'^(PROVINSI|REPUBLIK\s*INDONESIA|KA[BEPU]UPATEN|KABUPATEN|KOTA|PEMERINTAH|PEMKAB|PEMKOT)',
+    re.IGNORECASE
+)
+
+def is_administrative_header(text: Optional[str]) -> bool:
+    """
+    Checks if a text string belongs to Indonesian KTP administrative header
+    (e.g., PROVINSI JAWA BARAT, KABUPATEN BANDUNG BARAT, REPUBLIK INDONESIA).
+    Whitespace-invariant and OCR-typo tolerant across all 38 provinces and 514 regencies/cities.
+    """
+    if not text:
+        return False
+    s = str(text).strip()
+    if ADMIN_HEADER_REGEX.search(s):
+        return True
+    compact = re.sub(r'[^A-Z]', '', s.upper())
+    if any(compact.startswith(prefix) for prefix in _ADMIN_HEADER_PREFIXES):
+        return True
+    if len(compact) >= 8 and levenshtein_distance(compact[:8], "PROVINSI") <= 1:
+        return True
+    if len(compact) >= 9 and levenshtein_distance(compact[:9], "KABUPATEN") <= 1:
+        return True
+    return False
+
+
+# ─── Generic Field Label Prefix Stripper ───────────────────────────────────────
+LABEL_PREFIX_PATTERNS: Dict[str, str] = {
+    "kecamatan": r'(?:KECAMATAN|KECAMMAN|KECAMATN|KECAMAT|KECAM|KEC)',
+    "kelurahan_desa": r'(?:KELURAHAN\s*/?\s*DESA|KEL\s*/?\s*DESA|KELURAHAN|DESA|KEL)',
+    "status_perkawinan": r'(?:STATUS\s*PERKAWINAN|STATUS\s*KAWIN|STATUS)',
+    "agama": r'(?:AGAMA|AGM)',
+    "pekerjaan": r'(?:PEKERJAAN|PEKENJAAN|PEKEJAAN|PEKERJ)',
+    "kewarganegaraan": r'(?:KEWARGANEGARAAN|KEWARGAN|WARGANEGARA)',
+    "golongan_darah": r'(?:GOLONGAN\s*DARAH|GOL\s*\.?\s*DARAH|GOL)',
+    "jenis_kelamin": r'(?:JENIS\s*KELAMIN|JENIS|KELAMIN)',
+    "alamat": r'(?:ALAMAT|ALMT)',
+    "rt_rw": r'(?:RT\s*/?\s*[RAW]W|RT\s*/\s*AW|RT|RW)',
+}
+
+def strip_field_label_prefix(raw_val: Optional[str], field_name: str) -> Optional[str]:
+    """
+    Strips Dukcapil field label prefix from raw value strings, including
+    concatenated tokens without whitespace (e.g. 'KecamatanNGAMPRAH' -> 'NGAMPRAH').
+    If stripping empties the string, returns None.
+    """
+    if not raw_val:
+        return None
+    s = str(raw_val).strip()
+    pattern = LABEL_PREFIX_PATTERNS.get(field_name)
+    if not pattern:
+        return s
+
+    full_regex = rf'^{pattern}[:\s\.\-=_~]*'
+    cleaned = re.sub(full_regex, '', s, flags=re.IGNORECASE).strip()
+    return cleaned if cleaned else None
+
+
 # ─── Generic Regional Normalizer using Master Toponym Lexicon ──────────────────
 def normalize_regional(raw_val: Optional[str]) -> Optional[str]:
     """
-    Generic regional normalizer using Indonesian City/Kabupaten Master Lexicon:
-    1. Q -> C OCR typo replacement (Indonesian names do not use Q natively).
-    2. Suffix-drop recovery (e.g. BANDUN -> BANDUNG, SERAN -> SERANG, SUBAN -> SUBANG).
-    3. Levenshtein distance matching <= 1 for longer regional names.
+    Generic regional normalizer using Indonesian City/Kabupaten/Kecamatan Master Lexicon:
+    1. Q -> C and X -> K OCR typo replacements.
+    2. Label prefix stripping (e.g. KecamatanNGAMPRAH -> NGAMPRAH).
+    3. Normalized Canonical Matching: Whitespace & punctuation-invariant O(1) hash lookup.
+    4. Suffix-drop recovery on compact representation (e.g. BANDUN -> BANDUNG).
+    5. Fuzzy Levenshtein distance on compact representation (edit distance <= 1-2).
+    6. Compound prefix/suffix fallback.
     """
     if not raw_val:
         return None
     s = str(raw_val).upper().strip()
+    s = strip_field_label_prefix(s, "kecamatan")
+    s = strip_field_label_prefix(s, "kelurahan_desa")
     s = s.replace('Q', 'C')
     s = s.replace('X', 'K')
     s = re.sub(r'\s+', ' ', s).strip()
+    if not s:
+        return None
 
-    # 1. Exact match against lexicon
+    # 1. Exact match against lexicon directly
     if s in _KOTA_KABUPATEN_LEXICON:
         return s
 
-    # 2. Suffix-drop recovery (trailing character dropped at image crop boundary)
-    for valid_city in _KOTA_KABUPATEN_LEXICON:
-        if len(valid_city) >= 5 and valid_city.startswith(s) and len(valid_city) - len(s) == 1:
-            return valid_city
+    # 2. Normalized Canonical Matching (Whitespace & Punctuation Invariant)
+    compact_input = re.sub(r'[^A-Z0-9]', '', s)
+    if compact_input in _CANONICAL_REGIONAL_MAP:
+        return _CANONICAL_REGIONAL_MAP[compact_input]
 
-    # 3. Fuzzy match with Levenshtein distance <= 2 for names of length >= 6
-    if len(s) >= 6:
+    # 3. Suffix-drop recovery on compact key
+    for c_key, canonical_name in _CANONICAL_REGIONAL_MAP.items():
+        if len(c_key) >= 5 and c_key.startswith(compact_input) and len(c_key) - len(compact_input) == 1:
+            return canonical_name
+
+    # 4. Fuzzy match with Levenshtein distance on compact representation
+    if len(compact_input) >= 6:
         best_match = None
         min_dist = 99
-        for valid_city in _KOTA_KABUPATEN_LEXICON:
-            if abs(len(valid_city) - len(s)) <= 2:
-                dist = levenshtein_distance(s, valid_city)
-                if dist <= 2 and dist < min_dist:
+        for c_key, canonical_name in _CANONICAL_REGIONAL_MAP.items():
+            if abs(len(c_key) - len(compact_input)) <= 2:
+                dist = levenshtein_distance(compact_input, c_key)
+                max_allowed = 1 if len(compact_input) <= 7 else 2
+                if dist <= max_allowed and dist < min_dist:
                     min_dist = dist
-                    best_match = valid_city
+                    best_match = canonical_name
         if best_match:
             return best_match
+
+    # 5. Compound prefix/suffix fallback
+    compound = tokenize_compound_name(s)
+    if compound and compound != s:
+        c_comp = re.sub(r'[^A-Z0-9]', '', compound)
+        if c_comp in _CANONICAL_REGIONAL_MAP:
+            return _CANONICAL_REGIONAL_MAP[c_comp]
+        return compound
 
     return s
 
@@ -542,6 +647,7 @@ def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
     if not raw_val:
         return None
     s = str(raw_val).upper().strip().lstrip(':').strip()
+    s = strip_field_label_prefix(s, "pekerjaan") or s
     if re.search(r'BELUM\s*/?\s*TIDAK\s*BEKERJA', s):
         return "BELUM/TIDAK BEKERJA"
     if re.search(r'PELAJAR\s*/?\s*MAHASISWA', s):
@@ -610,11 +716,25 @@ def tokenize_pekerjaan(raw_val: Optional[str]) -> Optional[str]:
 
 
 # ─── Generic Address Tokenizer with Fuzzy Match against _ADDRESS_KEYWORDS ─────
+# ─── National Settlement & Access Prefixes (Layer 1) ───────────────────────────
+_NATIONAL_SETTLEMENT_PREFIXES = (
+    "PERUMAHAN", "LINGKUNGAN", "KOMPLEK", "KAMPUNG", "GAMPONG",
+    "LEMBANG", "JORONG", "NAGARI", "BANJAR", "LORONG", "DUSUN",
+    "JALAN", "PERUM", "KOMP", "LINGK", "GANG", "DSN",
+    "KP", "JL", "GG", "LR"
+)
+_PREFIX_PATTERN = '|'.join(sorted(_NATIONAL_SETTLEMENT_PREFIXES, key=len, reverse=True))
+_NATIONAL_PREFIX_REGEX = re.compile(rf'\b({_PREFIX_PATTERN})(?=[A-Za-z]{{3,}})', re.IGNORECASE)
+_NATIONAL_DOT_REGEX = re.compile(rf'\b({_PREFIX_PATTERN})\.\s*', re.IGNORECASE)
+
+
+# ─── 3-Layer Structural Address Normalizer ─────────────────────────────────────
 def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
     """
-    Generic address tokenizer with fuzzy keyword normalization:
-    - Normalizes spacing around prefixes (BLOK, NO, KP, JL).
-    - Resolves OCR typos in standard address terms (edit distance <= 1 against _ADDRESS_KEYWORDS).
+    3-Layer Structural & Region-Agnostic Indonesian Address Normalizer:
+    - Layer 1: National Access & Settlement Prefix Separation (KP, JL, DSN, BANJAR, NAGARI, etc.)
+    - Layer 2: Alphanumeric & Identifier Transitions (BLOK, NO, RT, RW, KM, KAV, numbers)
+    - Layer 3: Compound Place Name Recovery via Master Gazetteer (_CANONICAL_REGIONAL_MAP)
     """
     if not raw_val:
         return None
@@ -622,23 +742,26 @@ def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
     if not s:
         return None
 
-    # 1. Separasi keyword alamat utama dari kata sebelumnya yang menempel
+    # Layer 1: Prefix Akses & Pemukiman Nasional
+    s = _NATIONAL_PREFIX_REGEX.sub(r'\1 ', s)
+    s = _NATIONAL_DOT_REGEX.sub(r'\1. ', s)
+
+    # Separasi keyword komplek/perumahan generik dari kata sebelumnya yang menempel
     keywords = ["PERMAI", "INDAH", "BLOK", "ASRI", "UTAMA", "JAYA", "MAKMUR", "SEJAHTERA", "GRIYA", "GRYA", "VILLA", "VILA", "PASIR", "SEMBUNG", "RANCAEKEK"]
     for kw in keywords:
         s = re.sub(rf'([A-Za-z]{{3,}})({kw})', r'\1 \2', s)
 
-    # 2. Separasi kata BLOK / NO / KP / JL dengan huruf/angka setelahnya
-    s = re.sub(r'\bBLOK([A-Z])', r'BLOK \1', s)
-    s = re.sub(r'\bNO([A-Z0-9])', r'NO \1', s)
-    s = re.sub(r'\bKP([A-Z])', r'KP \1', s)
-    s = re.sub(r'\bJL([A-Z])', r'JL \1', s)
-
-    # 3. Separasi berbatasan dengan angka / NO
-    s = re.sub(r'(\d+)(NO)\b', r'\1 \2', s)
+    # Layer 2: Boundary Alfanumerik & Pengenal Blok/Nomor
+    s = re.sub(r'\bBLOK([A-Z0-9])', r'BLOK \1', s, flags=re.I)
+    s = re.sub(r'\b(NO|NOMOR)([0-9A-Z])', r'\1 \2', s, flags=re.I)
+    s = re.sub(r'\b(KAV|KAVLING)([0-9A-Z])', r'\1 \2', s, flags=re.I)
+    s = re.sub(r'\bKM([0-9])', r'KM \1', s, flags=re.I)
+    s = re.sub(r'\b(RT|RW)([0-9])', r'\1 \2', s, flags=re.I)
     s = re.sub(r'([A-Za-z]+)(\d+)', r'\1 \2', s)
+    s = re.sub(r'(\d+)(NO)\b', r'\1 \2', s, flags=re.I)
     s = re.sub(r'(\d+)([A-Za-z]+)', r'\1 \2', s)
 
-    # 4. Tokenisasi dan koreksi fuzzy terhadap _ADDRESS_KEYWORDS
+    # Layer 3: Compound Word via Master Gazetteer Kemendagri/BPS
     tokens = s.split()
     seg_tokens: List[str] = []
     for t in tokens:
@@ -646,8 +769,18 @@ def tokenize_address(raw_val: Optional[str]) -> Optional[str]:
             seg_tokens.append(t)
             continue
 
-        # Check fuzzy match against canonical address keywords (edit distance <= 1 for len >= 5)
         clean_t = t.strip('.')
+        compact_t = re.sub(r'[^A-Z0-9]', '', clean_t.upper())
+
+        # Check against Master Gazetteer O(1) hash map
+        if compact_t in _CANONICAL_REGIONAL_MAP:
+            canonical = _CANONICAL_REGIONAL_MAP[compact_t]
+            if ' ' in canonical and len(compact_t) >= 6:
+                suffix_dot = '.' if t.endswith('.') else ''
+                seg_tokens.append(canonical + suffix_dot)
+                continue
+
+        # Check fuzzy match against canonical address keywords (edit distance <= 1 for len >= 5)
         matched_kw = None
         if len(clean_t) >= 5:
             for kw in _ADDRESS_KEYWORDS:
@@ -835,17 +968,35 @@ def tokenize_name(raw_val: Optional[str], confidence: Optional[float] = None) ->
         raw_t = re.sub(r'[^A-Z]', '', tok.upper())
         if len(raw_t) < 4:
             return None
+        # Guardrail: If raw_t itself is an exact match in the lexicon, never segment it
+        if raw_t in _V3_NAME_LEXICON:
+            return None
 
-        def is_valid_component(s: str) -> Tuple[bool, str, int]:
+        def is_valid_component(s: str, is_first: bool, is_last: bool) -> Tuple[bool, str, int]:
+            # 1-letter initial allowed only at the start or end of the string
             if len(s) == 1 and s in SINGLE_LETTERS:
-                return True, s, 0
+                if is_first or is_last:
+                    return True, s, 0
+                return False, s, 99
+
+            # 2-letter standard initials allowed only at the boundary
+            if len(s) == 2 and (is_first or is_last):
+                if s in {"DS", "TB", "ST", "HJ", "DR"}:
+                    return True, s, 0
+                return False, s, 99
+
             if s in _V3_NAME_LEXICON:
                 return True, s, 0
+
+            # Only consider fuzzy recovery for components >= 5 characters
             if len(s) >= 5:
                 rec = fuzzy_recover_name(s, _V3_NAME_LEXICON)
                 if rec in _V3_NAME_LEXICON:
-                    resolved = s if (is_valid_phonetic_token(s) and (confidence is None or confidence >= 90.0)) else rec
-                    return True, resolved, levenshtein_distance(s, rec)
+                    dist = levenshtein_distance(s, rec)
+                    if dist <= 1:
+                        resolved = s if (is_valid_phonetic_token(s) and (confidence is None or confidence >= 90.0)) else rec
+                        return True, resolved, dist
+
             return False, s, 99
 
         memo: Dict[int, Tuple[Optional[List[str]], int]] = {}
@@ -861,10 +1012,13 @@ def tokenize_name(raw_val: Optional[str], confidence: Optional[float] = None) ->
 
             for end in range(start + 1, len(raw_t) + 1):
                 sub = raw_t[start:end]
-                if len(sub) == 1 and (start != 0 and end != len(raw_t)):
+                is_first = (start == 0)
+                is_last = (end == len(raw_t))
+                # Enforce guardrail: non-boundary components must be at least 3 letters
+                if len(sub) < 3 and not (is_first or is_last):
                     continue
 
-                valid, resolved, cost = is_valid_component(sub)
+                valid, resolved, cost = is_valid_component(sub, is_first, is_last)
                 if valid:
                     rest, rest_cost = dp(end)
                     if rest is not None:

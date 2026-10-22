@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Dict, Any, Tuple
 from app.core.logging_config import logger, request_id_var
@@ -19,11 +20,16 @@ CRITICAL_FIELDS = [
 ]
 
 
+def is_tier2_fallback_enabled() -> bool:
+    """Returns True if Tier 2 (Paddle Engine) fallback is enabled via environment variable."""
+    return os.getenv("ENABLE_TIER2_FALLBACK", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _run_tiered_hybrid_pipeline(img_bytes: bytes) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
     """
     Tiered Hybrid Pipeline:
     - Tier 1: V3 ONNX Engine (0.3s)
-    - Tier 2: V2 Paddle Engine Fallback (triggered only if 2+ critical fields are missing)
+    - Tier 2: V2 Paddle Engine Fallback (triggered only if enabled and 2+ critical fields are missing)
     """
     req_id = request_id_var.get()
     t_start = time.perf_counter()
@@ -40,8 +46,8 @@ def _run_tiered_hybrid_pipeline(img_bytes: bytes) -> Tuple[Dict[str, Dict[str, A
     missing_fields = [fn for fn in CRITICAL_FIELDS if not parsed_raw.get(fn, {}).get("val")]
     is_hybrid_triggered = False
 
-    # Tier 2: Deep Fallback if 2 or more critical fields are missing
-    if len(missing_fields) >= 2:
+    # Tier 2: Deep Fallback if 2 or more critical fields are missing and enabled
+    if is_tier2_fallback_enabled() and len(missing_fields) >= 2:
         try:
             from app.ktp.v2.paddle_engine import PaddleEngineV2
             from app.ktp.v2.spatial_parser import SpatialParserV2
@@ -65,6 +71,8 @@ def _run_tiered_hybrid_pipeline(img_bytes: bytes) -> Tuple[Dict[str, Dict[str, A
             is_hybrid_triggered = True
         except Exception as e:
             logger.warning(f"[Hybrid Fallback] Tier 2 fallback skipped/unavailable: {e}")
+    elif len(missing_fields) >= 2:
+        logger.info(f"[Hybrid Fallback] Tier 2 disabled by configuration (ENABLE_TIER2_FALLBACK=false) for req_id={req_id}, missing={missing_fields}")
 
     t_total_ms = round((time.perf_counter() - t_start) * 1000, 2)
     timings_summary = {

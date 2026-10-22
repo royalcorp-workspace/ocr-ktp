@@ -9,9 +9,9 @@ def extract_alamat(block: Optional[str], full_text: str = "") -> Optional[str]:
     if not text_to_process and full_text:
         for line in full_text.splitlines():
             line_up = line.upper()
-            if any(hdr in line_up for hdr in ["PROVINSI", "KABUPATEN", "KOTA", "NIK", "NAMA"]):
+            if any(hdr in line_up for hdr in ["PROVINSI", "KABUPATEN", "KOTA", "NIK", "NAMA", "JENIS", "KELAMIN", "AGAMA", "STATUS", "PEKERJAAN", "KEWARGANEGARAAN", "BERLAKU", "TEMPAT"]):
                 continue
-            if any(kw in line_up for kw in ["KP", "JL", "JALAN", "GANG", "GG", "BLOK", "PERUM", "DUSUN", "KAMPUNG", "BOJONG", "DS", "DESA", "KEL", "RT", "RW"]):
+            if any(re.search(r'\b' + kw + r'\b', line_up) for kw in ["KP", "JL", "JALAN", "GANG", "GG", "BLOK", "PERUM", "DUSUN", "KAMPUNG", "BOJONG", "DS", "DESA", "KEL", "RT", "RW"]):
                 text_to_process = line
                 break
 
@@ -53,16 +53,85 @@ def extract_alamat(block: Optional[str], full_text: str = "") -> Optional[str]:
     return val if val else None
 
 
-def extract_rt_rw(
+def parse_rt_rw_with_spillover(raw_str: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Ekstrak pola RT/RW numerik 3-digit closed set (001/002) dan isolasi teks spillover alfabet.
+    Returns:
+        (rt_rw, spillover)
+    """
+    if not raw_str or not raw_str.strip():
+        return None, None
+
+    # Hapus format tanggal lahir agar tidak disalahartikan sebagai RT/RW
+    date_pattern = r'\b\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{2,4}\b'
+    cleaned_input = re.sub(date_pattern, ' ', raw_str)
+
+    # 1. Regex untuk RT/RW pattern (1-3 digit, dipisahkan slash atau variasi separator seperti /RW.)
+    match = re.search(r'([0-9OolI|!sSZzBbGqUcD]{1,3})\s*(?:/\s*(?:RW[.:\s]*)?|[/|\\])\s*([0-9OolI|!sSZzBbGqUcD]{1,3})', cleaned_input, re.IGNORECASE)
+    matched_span = None
+    rt_norm = None
+    rw_norm = None
+
+    if match:
+        rt_raw, rw_raw = match.groups()
+        if any(c.isdigit() for c in rt_raw + rw_raw):
+            rt_corr = "".join(DIGIT_MAP.get(c, c) for c in rt_raw)
+            rw_corr = "".join(DIGIT_MAP.get(c, c) for c in rw_raw)
+            if len(rt_corr) == 3 and rt_corr.startswith("8"):
+                rt_corr = "0" + rt_corr[1:]
+            if len(rw_corr) == 3 and rw_corr.startswith("8"):
+                rw_corr = "0" + rw_corr[1:]
+
+            if rt_corr.isdigit() and rw_corr.isdigit():
+                rt_norm = f"{int(rt_corr):03d}"
+                rw_norm = f"{int(rw_corr):03d}"
+                matched_span = match.span()
+
+
+    if not rt_norm:
+        # Fallback match 6-digit: RT/RW 001 002
+        match_6d = re.search(r'\b(?:RT|RW|RT/RW|RTRW|RTIRW|RT/AW)?\s*[:=.\-]?\s*([0-9OolI|!sSZzBbGqUcD]{3})\s*[/:\.\- ]\s*([0-9OolI|!sSZzBbGqUcD]{3})\b', cleaned_input, re.IGNORECASE)
+        if match_6d:
+            rt_raw, rw_raw = match_6d.groups()
+            rt_corr = "".join(DIGIT_MAP.get(c, c) for c in rt_raw)
+            rw_corr = "".join(DIGIT_MAP.get(c, c) for c in rw_raw)
+            if rt_corr.isdigit() and rw_corr.isdigit():
+                rt_norm = f"{int(rt_corr):03d}"
+                rw_norm = f"{int(rw_corr):03d}"
+                matched_span = match_6d.span()
+
+    if not rt_norm or not rw_norm:
+        return None, None
+
+    rt_rw_res = f"{rt_norm}/{rw_norm}"
+
+    # 2. Extract Residual Spillover Text
+    if matched_span:
+        start_idx, end_idx = matched_span
+        residual = cleaned_input[:start_idx] + " " + cleaned_input[end_idx:]
+    else:
+        residual = ""
+
+    # Bersihkan noise label RT/RW dari residual (preserve dots inside abbreviations like KP. or JL.)
+    residual = re.sub(r'\b(RT|RW|RT/RW|RTRW|RTIRW|RT/AW|RT/RAW|RT/RN|ATAW|T/RW|T/AW)\b', ' ', residual, flags=re.IGNORECASE)
+    residual = residual.strip(" :.=-—–_\\/")
+    residual = re.sub(r'\s+', ' ', residual).strip()
+
+    # Validasi kelayakan spillover sebagai potongan alamat (minimal 3 karakter alfabet)
+    alpha_chars = re.sub(r'[^A-Za-z]', '', residual)
+    spillover = residual if len(alpha_chars) >= 3 else None
+
+    return rt_rw_res, spillover
+
+
+
+def extract_rt_rw_with_spillover(
     block: Optional[str],
     full_text: str = "",
     block_alamat: Optional[str] = None
-) -> Optional[str]:
-    # We only want to search if there's an explicit RT/RW label.
-    # The block passed here comes from parse_label_blocks which matched the label.
+) -> tuple[Optional[str], Optional[str]]:
     text_to_search = block if block and block.strip() else ""
 
-    # If no RT_RW block, we can check block_alamat, but ONLY if we find a strong RT/RW label indicator
     if not text_to_search and block_alamat:
         rt_pattern = r'\b(RT|RW|RT/RW|RTRW|RTIRW|RT/AW|RT/RAW|RT/RN)\b'
         for line in block_alamat.splitlines():
@@ -71,33 +140,15 @@ def extract_rt_rw(
                 break
 
     if not text_to_search:
-        return None
+        return None, None
 
-    # Remove dates from text_to_search to prevent fabricating RT/RW from birth dates
-    date_pattern = r'\b\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{2,4}\b'
-    text_to_search = re.sub(date_pattern, ' ', text_to_search)
+    return parse_rt_rw_with_spillover(text_to_search)
 
-    match = re.search(r'([0-9OolI|!sSZzBbGqUcD]{1,3})\s*[/|\\7\-_s\s|]\s*([0-9OolI|!sSZzBbGqUcD]{1,3})', text_to_search)
-    if match:
-        rt_raw, rw_raw = match.groups()
-        rt_corr = "".join(DIGIT_MAP.get(c, c) for c in rt_raw)
-        rw_corr = "".join(DIGIT_MAP.get(c, c) for c in rw_raw)
-        if len(rt_corr) == 3 and rt_corr.startswith("8"):
-            rt_corr = "0" + rt_corr[1:]
-        if len(rw_corr) == 3 and rw_corr.startswith("8"):
-            rw_corr = "0" + rw_corr[1:]
 
-        rt_corr = rt_corr.zfill(3)
-        rw_corr = rw_corr.zfill(3)
-        if rt_corr.isdigit() and rw_corr.isdigit() and len(rt_corr) <= 3 and len(rw_corr) <= 3:
-            return f"{rt_corr}/{rw_corr}"
-
-    match_6digit = re.search(r'\b(RT|RW|RT/RW|RTRW|RTIRW|RT/AW)\s*[:=.\-]?\s*([0-9OolI|!sSZzBbGqUcD]{3})\s*[/:\.\-]?\s*([0-9OolI|!sSZzBbGqUcD]{3})\b', text_to_search, re.IGNORECASE)
-    if match_6digit:
-        _, rt_raw, rw_raw = match_6digit.groups()
-        rt_corr = "".join(DIGIT_MAP.get(c, c) for c in rt_raw).zfill(3)
-        rw_corr = "".join(DIGIT_MAP.get(c, c) for c in rw_raw).zfill(3)
-        if rt_corr.isdigit() and rw_corr.isdigit():
-            return f"{rt_corr}/{rw_corr}"
-
-    return None
+def extract_rt_rw(
+    block: Optional[str],
+    full_text: str = "",
+    block_alamat: Optional[str] = None
+) -> Optional[str]:
+    rt_rw, _ = extract_rt_rw_with_spillover(block, full_text, block_alamat)
+    return rt_rw

@@ -15,7 +15,7 @@ try:
     def _safe_init_sess_opts(config):
         opt = _orig_init_sess_opts(config)
         opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-        opt.enable_cpu_mem_arena = False
+        opt.enable_cpu_mem_arena = True
         return opt
     OrtInferSession._init_sess_opts = staticmethod(_safe_init_sess_opts)
 except ImportError:
@@ -35,8 +35,9 @@ class ONNXEngineV3:
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._init_engine()
+                instance = super().__new__(cls)
+                instance._init_engine()
+                cls._instance = instance
             return cls._instance
 
     def _init_engine(self):

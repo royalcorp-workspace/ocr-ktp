@@ -213,6 +213,40 @@ def check_nik_dob_consistency(
     return False
 
 
+def derive_dob_from_nik(nik: Optional[str]) -> Optional[str]:
+    """
+    Ekstrak tanggal lahir standar DD-MM-YYYY secara deterministik dari NIK 16-digit.
+    Mendukung offset wanita (+40 hari) dan validasi kalender datetime.date.
+    """
+    if not nik:
+        return None
+    s = str(nik).strip()
+    if len(s) != 16 or not s.isdigit():
+        return None
+
+    try:
+        raw_dd = int(s[6:8])
+        mm = int(s[8:10])
+        yy = int(s[10:12])
+
+        real_dd = raw_dd - 40 if raw_dd > 40 else raw_dd
+        if not (1 <= real_dd <= 31 and 1 <= mm <= 12):
+            return None
+
+        # Batas abad e-KTP reguler (usia minimum 17 tahun untuk e-KTP)
+        # YY <= current_year % 100 -> 20YY, YY > current_year % 100 -> 19YY
+        import datetime
+        current_year = datetime.date.today().year
+        cutoff_yy = current_year % 100
+        yyyy = 2000 + yy if yy <= cutoff_yy else 1900 + yy
+
+        # Strict calendar validation (guards against e.g. 29 Feb on non-leap, 31 April, etc.)
+        valid_date = datetime.date(yyyy, mm, real_dd)
+        return f"{valid_date.day:02d}-{valid_date.month:02d}-{valid_date.year:04d}"
+    except (ValueError, TypeError):
+        return None
+
+
 def sync_nik_with_birthdate(
     nik: Optional[str],
     tanggal_lahir_str: Optional[str],
@@ -223,6 +257,7 @@ def sync_nik_with_birthdate(
     AKAN SELALU mengembalikan NIK asli dari OCR tanpa melakukan mutasi digit.
     """
     return nik
+
 
 
 def correct_tempat_lahir_fuzzy(tempat_lahir: Optional[str]) -> Optional[str]:

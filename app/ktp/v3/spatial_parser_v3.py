@@ -6,7 +6,9 @@ from app.ktp.v3.field_cleaners_v3 import (
     clean_blood_type, clean_marital_status, clean_citizenship,
     clean_religion, clean_rt_rw, tokenize_pekerjaan, normalize_regional,
     tokenize_compound_name, tokenize_name, tokenize_address,
-    extract_date_from_nik, _V3_NAME_LEXICON, _KOTA_KABUPATEN_LEXICON
+    extract_date_from_nik, is_administrative_header, strip_field_label_prefix,
+    levenshtein_distance, LABEL_PREFIX_PATTERNS,
+    _V3_NAME_LEXICON, _KOTA_KABUPATEN_LEXICON
 )
 
 # Label Anchor Matrix Patterns with OCR Typo Tolerance for V3
@@ -32,7 +34,7 @@ LABEL_PATTERNS = {
     ],
     "golongan_darah": [r'GOL\.?\s*DARAH', r'\bDARAH\b', r'\bGOL\b'],
     "alamat": [r'\b(A[L1I]?AMAT?|AAMAT|ALMT)\b'],
-    "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW|RI/RW|RT/RV|RT/PW|T/RW)\b'],
+    "rt_rw": [r'\b(RT\s*/?\s*RW|RT|RW|RI/RW|RT/RV|RT/PW|T/RW|RT/AW)\b'],
     "kelurahan_desa": [
         r'KE[LV1I/|]\s*[/.\s]?\s*DESA',
         r'\bKE[LV]DESA\b',
@@ -60,12 +62,17 @@ LABEL_PATTERNS = {
 
 
 def is_label_text(text: str) -> Optional[str]:
-    """Returns label_key if text matches any label pattern, else None."""
+    """Returns label_key if text matches any label pattern or Dukcapil prefix, else None."""
+    if not text:
+        return None
     upper = text.upper().strip()
     for label_key, patterns in LABEL_PATTERNS.items():
         for pat in patterns:
             if re.search(pat, upper):
                 return label_key
+    for field_name, pat in LABEL_PREFIX_PATTERNS.items():
+        if re.match(rf'^{pat}', upper):
+            return field_name
     return None
 
 
@@ -81,14 +88,12 @@ def extract_inline_value(text: str, label_key: str) -> Optional[str]:
         if val:
             return val
 
-    patterns = LABEL_PATTERNS.get(label_key, [])
-    upper = s.upper()
-    for pat in patterns:
-        m = re.search(pat, upper)
-        if m:
-            val = s[m.end():].strip()
-            if val:
-                return val
+    stripped = strip_field_label_prefix(s, label_key)
+    if stripped is None:
+        return None
+    if stripped != s:
+        return stripped
+
     return None
 
 
@@ -202,10 +207,14 @@ def group_boxes_into_lines(boxes: List[PaddleTextBox]) -> List[List[PaddleTextBo
 
 
 class SpatialParserV3:
+    def parse(self, text_boxes: List[PaddleTextBox], **kwargs) -> Dict[str, Dict[str, Any]]:
+        return self.parse_ktp(text_boxes)
+
     def parse_ktp(self, text_boxes: List[PaddleTextBox]) -> Dict[str, Dict[str, Any]]:
         """
         Parses text boxes using 5-Layer Multi-Strategy Pipeline with Deterministic Spatial Slot Grid.
         """
+
         if not text_boxes:
             return {k: {"val": None, "conf": 0.0} for k in [
                 "nik", "nama", "tempat_lahir", "tanggal_lahir", "jenis_kelamin",
@@ -244,16 +253,42 @@ class SpatialParserV3:
         def is_signature_zone(b: PaddleTextBox) -> bool:
             return b.x_min > (0.55 * w_max) and b.y_min > (0.55 * h_max)
 
+        # Early landmark detection for NIK anchor to guide dual-check header filtering
+        nik_anchor_box = next(
+            (b for b in text_boxes if is_label_text(b.text) == "nik" or re.search(r'\b(NIK|HIK|MIL|NlK|N1K)\b', b.text.upper())),
+            None
+        )
+        early_nik_y = nik_anchor_box.center_y if nik_anchor_box else None
+
         for line in lines:
             line_str = " ".join(b.text for b in line)
             line_avg_y = sum(b.center_y for b in line) / len(line)
-            if line_avg_y < (0.18 * h_max) and ("PROVINSI" in line_str.upper() or "KABUPATEN" in line_str.upper()):
+
+            # Dual-Check Header Filter: Geometris (area atas kartu) AND Leksikal (istilah administratif resmi KTP)
+            is_geo_top = (line_avg_y < (0.20 * h_max)) or (early_nik_y is not None and line_avg_y < (early_nik_y - 5.0))
+            is_lex_header = is_administrative_header(line_str) or any(is_administrative_header(b.text) for b in line)
+
+            if is_geo_top and is_lex_header:
                 for b in line:
                     used_box_ids.add(id(b))
                 continue
 
+            # Box-level dual-check filter for any residual header boxes grouped in non-header lines
+            line_filtered = []
+            for b in line:
+                b_geo = (b.center_y < (0.20 * h_max)) or (early_nik_y is not None and b.center_y < (early_nik_y - 5.0))
+                if b_geo and is_administrative_header(b.text):
+                    used_box_ids.add(id(b))
+                else:
+                    line_filtered.append(b)
+            if not line_filtered:
+                continue
+            line = line_filtered
+            line_str = " ".join(b.text for b in line)
+
             # 1. Compound Line: TEMPAT/TGL LAHIR
             if is_label_text(line_str) == "tempat_tanggal_lahir" or re.search(r'TEMPA[TL].*LAHIR|TG[IL1].*LAHIR', line_str, re.I):
+                field_y_anchors["tempat_tanggal_lahir"] = line_avg_y
                 val_boxes = [b for b in line if not is_label_text(b.text) and not is_signature_zone(b)]
                 val_str = ""
                 avg_conf = 0.0
@@ -365,6 +400,12 @@ class SpatialParserV3:
             # 3. Standard Single-Field Labels
             for idx, box in enumerate(line):
                 label_key = is_label_text(box.text)
+                if not label_key and box.center_x <= (0.25 * w_max):
+                    # Spatial Disambiguation: Left Column (X <= 0.25*W) close to "NAMA"
+                    clean_alpha = re.sub(r'[^A-Z]', '', box.text.upper())
+                    if clean_alpha and levenshtein_distance(clean_alpha, "NAMA") <= 1:
+                        label_key = "nama"
+
                 if not label_key or label_key in ["tempat_tanggal_lahir", "jenis_kelamin", "golongan_darah"]:
                     continue
 
@@ -372,13 +413,14 @@ class SpatialParserV3:
                 inline_val = extract_inline_value(box.text, label_key)
                 val_str = ""
                 avg_conf = 0.0
+                val_boxes = []
 
                 if inline_val:
                     val_str = inline_val
                     avg_conf = box.confidence
                 else:
-                    val_boxes = []
                     for right_box in line[idx + 1:]:
+
                         if is_label_text(right_box.text):
                             break
                         if is_signature_zone(right_box):
@@ -390,10 +432,38 @@ class SpatialParserV3:
                         avg_conf = sum(b.confidence for b in val_boxes) / len(val_boxes)
                         for b in val_boxes:
                             used_box_ids.add(id(b))
+                    elif label_key == "nama":
+                        # Check adjacent line if value box was split onto the next line
+                        line_idx = lines.index(line)
+                        if line_idx + 1 < len(lines):
+                            next_line = lines[line_idx + 1]
+                            has_lbl = any(is_label_text(b.text) for b in next_line)
+                            if not has_lbl:
+                                cur_y = sum(b.center_y for b in line) / len(line)
+                                next_y = sum(b.center_y for b in next_line) / len(next_line)
+                                delta_y = next_y - cur_y
+                                anchor_h = (box.y_max - box.y_min) or 20.0
+                                if 0 < delta_y <= max(24.0, 1.6 * anchor_h):
+                                    next_val_boxes = [
+                                        b for b in next_line
+                                        if id(b) not in used_box_ids
+                                        and b.center_x > (0.25 * w_max)
+                                        and not is_signature_zone(b)
+                                        and not is_administrative_header(b.text)
+                                        and not re.search(r'\d', b.text)
+                                    ]
+                                    if next_val_boxes:
+                                        val_boxes = next_val_boxes
+                                        val_str = " ".join(b.text for b in val_boxes)
+                                        avg_conf = sum(b.confidence for b in val_boxes) / len(val_boxes)
+                                        for b in val_boxes:
+                                            used_box_ids.add(id(b))
 
                 if val_str:
+                    val_str = strip_field_label_prefix(val_str, label_key)
                     if label_key == "nik":
                         c_val = clean_nik(val_str)
+                        field_y_anchors["nik"] = box.center_y
                     elif label_key == "nama":
                         line_idx = lines.index(line)
                         name_parts = [val_str]
@@ -451,6 +521,14 @@ class SpatialParserV3:
                     elif label_key == "rt_rw":
                         c_val = clean_rt_rw(val_str)
                         field_y_anchors["rt_rw"] = box.center_y
+                        from app.ktp.extractor.address import parse_rt_rw_with_spillover
+                        _, spillover = parse_rt_rw_with_spillover(val_str)
+                        if spillover:
+                            cur_alamat = extracted_raw["alamat"].get("val")
+                            if not cur_alamat:
+                                extracted_raw["alamat"] = {"val": spillover, "conf": round(avg_conf, 1)}
+                            elif spillover.upper() not in cur_alamat.upper():
+                                extracted_raw["alamat"]["val"] = f"{cur_alamat} {spillover}".strip()
                     elif label_key == "agama":
                         c_val = clean_religion(val_str)
                         field_y_anchors["agama"] = box.center_y
@@ -578,11 +656,15 @@ class SpatialParserV3:
                         used_box_ids.add(id(b))
                         continue
 
-                if not extracted_raw["pekerjaan"]["val"]:
-                    if "BURUH" in txt.upper() or "PELAJAR" in txt.upper() or "SWASTA" in txt.upper() or "PNS" in txt.upper():
-                        extracted_raw["pekerjaan"] = {"val": tokenize_pekerjaan(txt), "conf": round(b.confidence, 1)}
-                        used_box_ids.add(id(b))
-                        continue
+                if not extracted_raw["pekerjaan"]["val"] and not re.search(r'\d', txt):
+                    if any(w in txt.upper() for w in ["BURUH", "PELAJAR", "MAHASISWA", "SWASTA", "PNS", "WIRASWASTA", "PETANI", "PEDAGANG", "TNI", "POLRI", "GURU", "DOKTER", "PENSIUNAN", "RUMAH TANGGA"]):
+                        tok_job = tokenize_pekerjaan(txt)
+                        if tok_job:
+                            extracted_raw["pekerjaan"] = {"val": tok_job, "conf": round(b.confidence, 1)}
+                            used_box_ids.add(id(b))
+                            field_y_anchors["pekerjaan"] = b.center_y
+                            continue
+
 
                 if not extracted_raw["berlaku_hingga"]["val"]:
                     cd = clean_date(txt)
@@ -609,8 +691,18 @@ class SpatialParserV3:
                     continue
 
                 if not extracted_raw["nama"]["val"] and not is_label_text(txt) and len(txt) > 3 and not re.search(r'\d', txt):
-                    extracted_raw["nama"] = {"val": tokenize_name(txt), "conf": round(b.confidence, 1)}
-                    used_box_ids.add(id(b))
+                    is_left_name_label = (b.center_x <= 0.25 * w_max and levenshtein_distance(re.sub(r'[^A-Z]', '', txt), "NAMA") <= 1)
+                    if not is_left_name_label and not is_administrative_header(txt):
+                        nik_y = field_y_anchors.get("nik")
+                        dob_y = field_y_anchors.get("tempat_tanggal_lahir") or field_y_anchors.get("tanggal_lahir")
+                        is_valid_y = True
+                        if nik_y is not None and b.center_y <= nik_y:
+                            is_valid_y = False
+                        if dob_y is not None and b.center_y >= dob_y:
+                            is_valid_y = False
+                        if is_valid_y:
+                            extracted_raw["nama"] = {"val": tokenize_name(txt), "conf": round(b.confidence, 1)}
+                            used_box_ids.add(id(b))
 
         # Layer 5: Pattern-Based Field Guesser with Deterministic Spatial Slot Grid
         self._layer5_pattern_guesser(text_boxes, extracted_raw, h_max, w_max, used_box_ids, field_y_anchors)
@@ -628,6 +720,73 @@ class SpatialParserV3:
             nik_conf = extracted_raw["nik"].get("conf", 95.0)
             extracted_raw["berlaku_hingga"] = {"val": "SEUMUR HIDUP", "conf": round(nik_conf, 1)}
 
+        # Relative Slot Grid Recovery: Dynamic Line Pitch for Missing Pekerjaan
+        if not extracted_raw["pekerjaan"]["val"]:
+            slot_map = {
+                "nik": 1, "nama": 2, "tempat_tanggal_lahir": 3, "jenis_kelamin": 4,
+                "alamat": 5, "rt_rw": 6, "kelurahan_desa": 7, "kecamatan": 8,
+                "agama": 9, "status_perkawinan": 10, "pekerjaan": 11, "kewarganegaraan": 12
+            }
+            pitches = []
+            known_anchors = [(slot_map[k], y) for k, y in field_y_anchors.items() if k in slot_map]
+            known_anchors.sort(key=lambda x: x[0])
+            for i in range(len(known_anchors) - 1):
+                s1, y1 = known_anchors[i]
+                s2, y2 = known_anchors[i + 1]
+                if s2 > s1:
+                    p = (y2 - y1) / (s2 - s1)
+                    if (0.025 * h_max) <= p <= (0.075 * h_max):
+                        pitches.append(p)
+            line_pitch = (sum(pitches) / len(pitches)) if pitches else (0.045 * h_max)
+
+            ref_anchor = None
+            if "status_perkawinan" in field_y_anchors:
+                ref_anchor = (slot_map["status_perkawinan"], field_y_anchors["status_perkawinan"])
+            elif "agama" in field_y_anchors:
+                ref_anchor = (slot_map["agama"], field_y_anchors["agama"])
+            elif "rt_rw" in field_y_anchors:
+                ref_anchor = (slot_map["rt_rw"], field_y_anchors["rt_rw"])
+            elif "nik" in field_y_anchors:
+                ref_anchor = (slot_map["nik"], field_y_anchors["nik"])
+
+            if ref_anchor:
+                s_ref, y_ref = ref_anchor
+                y_target_pekerjaan = y_ref + (11 - s_ref) * line_pitch
+            else:
+                y_target_pekerjaan = 0.69 * h_max
+
+            cand_pekerjaan_boxes = [
+                b for b in text_boxes
+                if id(b) not in used_box_ids
+                and abs(b.center_y - y_target_pekerjaan) <= (0.65 * line_pitch)
+                and b.x_min > (0.18 * w_max)
+                and not is_signature_zone(b)
+            ]
+            for b in cand_pekerjaan_boxes:
+                c_txt = clean_text(b.text)
+                if c_txt and not re.search(r'\d', c_txt):
+                    if any(w in c_txt.upper() for w in ["BURUH", "PELAJAR", "MAHASISWA", "SWASTA", "PNS", "WIRASWASTA", "PETANI", "PEDAGANG", "TNI", "POLRI", "GURU", "DOKTER", "PENSIUNAN", "RUMAH TANGGA"]):
+                        tok = tokenize_pekerjaan(c_txt)
+                        if tok:
+                            extracted_raw["pekerjaan"] = {"val": tok, "conf": round(b.confidence, 1)}
+                            used_box_ids.add(id(b))
+                            field_y_anchors["pekerjaan"] = b.center_y
+                            break
+
+
+        # Fallback 5: Legal Dukcapil Default untuk Kewarganegaraan jika label pudar
+        if not extracted_raw["kewarganegaraan"]["val"]:
+            has_wna = any("WNA" in b.text.upper() for b in text_boxes)
+            if has_wna:
+                extracted_raw["kewarganegaraan"] = {"val": "WNA", "conf": 90.0}
+            else:
+                has_regular_header = any(
+                    any(hdr in b.text.upper() for hdr in ["PROVINSI", "KABUPATEN", "KOTA", "REPUBLIK"])
+                    for b in text_boxes
+                )
+                if has_regular_header or (extracted_raw["nik"]["val"] and len(extracted_raw["nik"]["val"]) == 16):
+                    extracted_raw["kewarganegaraan"] = {"val": "WNI", "conf": 95.0}
+
         return extracted_raw
 
     def _layer5_pattern_guesser(
@@ -643,7 +802,7 @@ class SpatialParserV3:
             return b.x_min > (0.55 * w_max) and b.y_min > (0.55 * h_max)
 
         assigned_vals = {item["val"] for item in extracted_raw.values() if item and item.get("val")}
-        body_boxes = [b for b in text_boxes if b.y_min > (0.18 * h_max) and not is_signature_zone(b)]
+        body_boxes = [b for b in text_boxes if b.y_min > (0.18 * h_max) and not is_signature_zone(b) and not is_administrative_header(b.text)]
 
         unassigned: List[PaddleTextBox] = []
         for b in body_boxes:
@@ -676,11 +835,19 @@ class SpatialParserV3:
             # 2. RT/RW
             if not extracted_raw["rt_rw"]["val"]:
                 clean_rtrw = clean_rt_rw(txt)
-                if clean_rtrw and re.match(r'^\d{1,3}/\d{1,3}$', clean_rtrw):
+                if clean_rtrw:
                     extracted_raw["rt_rw"] = {"val": clean_rtrw, "conf": round(b.confidence, 1)}
                     assigned_vals.add(clean_rtrw)
                     used_box_ids.add(id(b))
                     y_rtrw = b.center_y
+                    from app.ktp.extractor.address import parse_rt_rw_with_spillover
+                    _, spillover = parse_rt_rw_with_spillover(txt)
+                    if spillover:
+                        cur_alamat = extracted_raw["alamat"].get("val")
+                        if not cur_alamat:
+                            extracted_raw["alamat"] = {"val": spillover, "conf": round(b.confidence, 1)}
+                        elif spillover.upper() not in cur_alamat.upper():
+                            extracted_raw["alamat"]["val"] = f"{cur_alamat} {spillover}".strip()
                     continue
 
             # 3. Alamat

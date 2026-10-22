@@ -26,7 +26,13 @@ class KTPExtractor:
         nama = identity.extract_nama(blocks.get("NAMA"), cleaned_text)
         golongan_darah = identity.extract_golongan_darah(blocks.get("GOL_DARAH"), cleaned_text)
         alamat = address.extract_alamat(blocks.get("ALAMAT"), cleaned_text)
-        rt_rw = address.extract_rt_rw(blocks.get("RT_RW"), cleaned_text, blocks.get("ALAMAT"))
+        rt_rw, rt_spillover = address.extract_rt_rw_with_spillover(blocks.get("RT_RW"), cleaned_text, blocks.get("ALAMAT"))
+        if rt_spillover:
+            if not alamat:
+                alamat = rt_spillover
+            elif rt_spillover.upper() not in alamat.upper():
+                alamat = f"{alamat} {rt_spillover}".strip()
+
         kelurahan_desa = extract_text_field(blocks.get("KEL_DESA"))
         kecamatan = extract_text_field(blocks.get("KECAMATAN"))
         agama = civil.extract_agama(blocks.get("AGAMA"), cleaned_text)
@@ -34,6 +40,19 @@ class KTPExtractor:
         pekerjaan = civil.extract_pekerjaan(blocks.get("PEKERJAAN"), cleaned_text)
         kewarganegaraan = civil.extract_kewarganegaraan(blocks.get("KEWARGANEGARAAN"), cleaned_text)
         berlaku_hingga = civil.extract_berlaku_hingga(blocks.get("BERLAKU_HINGGA"), cleaned_text)
+
+        # Dual-Source Date-of-Birth Resolver (OCR Fisik vs NIK Redundancy)
+        if not tanggal_lahir and nik:
+            tanggal_lahir = validators.derive_dob_from_nik(nik)
+
+        # Legal Dukcapil Default untuk Kewarganegaraan jika label pudar/hilang
+        if not kewarganegaraan:
+            if "WNA" in cleaned_text.upper():
+                kewarganegaraan = "WNA"
+            else:
+                has_regular_header = any(hdr in cleaned_text.upper() for hdr in ["PROVINSI", "KABUPATEN", "KOTA", "REPUBLIK"])
+                if has_regular_header or (nik and len(nik) == 16):
+                    kewarganegaraan = "WNI"
 
         # Heuristic fallback untuk gambar tercrop / label terdeteksi < 5
         if is_cropped_or_low_block:
@@ -67,8 +86,11 @@ class KTPExtractor:
                 pekerjaan = civil.extract_pekerjaan(None, cleaned_text)
             if not kewarganegaraan:
                 kewarganegaraan = civil.extract_kewarganegaraan(None, cleaned_text)
+                if not kewarganegaraan:
+                    kewarganegaraan = "WNI" if "WNA" not in cleaned_text.upper() else "WNA"
             if not berlaku_hingga:
                 berlaku_hingga = civil.extract_berlaku_hingga(None, cleaned_text)
+
 
         # === Post-Processing & Validasi Kontekstual (Read-only consistency) ===
         is_dob_consistent = validators.check_nik_dob_consistency(nik, tanggal_lahir, jenis_kelamin)
